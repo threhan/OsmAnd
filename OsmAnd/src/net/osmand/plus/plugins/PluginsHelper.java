@@ -109,6 +109,7 @@ public class PluginsHelper {
 
 		allPlugins.add(new WikipediaPlugin(app));
 		allPlugins.add(new OsmandRasterMapsPlugin(app));
+		allPlugins.add(new net.osmand.plus.plugins.publictracks.PublicTracksPlugin(app));
 		allPlugins.add(new OsmandMonitoringPlugin(app));
 		checkMarketPlugin(app, new SRTMPlugin(app));
 		allPlugins.add(new WeatherPlugin(app));

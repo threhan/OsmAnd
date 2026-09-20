@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <resources>
+    <string name="public_tracks_name">Public track network</string>
+    <string name="public_tracks_description">Offline selectable vector tracks from public-tracks/public-tracks.sqlite in the map data folder.</string>
+    <string name="public_tracks_choose">Choose a track</string>
+    <string name="public_tracks_title">Track %1$s</string>
+    <string name="public_tracks_details">%1$.2f km in %2$d source segments. Historical coverage may be incomplete. Separate segments are never joined automatically.</string>
+    <string name="public_tracks_navigate">Plan along this track</string>
+    <string name="public_tracks_export">Save GPX</string>
+    <string name="public_tracks_clear">Clear selection</string>
+    <string name="public_tracks_segment">Choose a continuous source segment</string>
+    <string name="public_tracks_segment_item">Segment %1$d · %2$.2f km</string>
+    <string name="public_tracks_saved">GPX saved: %1$s</string>
+    <string name="public_tracks_error">Could not read or save the public track layer.</string>
+    <string name="public_tracks_zoom">Zoom in to select tracks</string>
 <!--
 	README:
 	- The preferred way to help with translations is via https://hosted.weblate.org/engage/osmand/

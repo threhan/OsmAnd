@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="public_tracks_name">公共路迹矢量层</string>
+    <string name="public_tracks_description">自动显示地图数据目录 public-tracks/public-tracks.sqlite 中的离线路迹，支持逐条选择和轨迹导航。</string>
+    <string name="public_tracks_choose">选择一条轨迹</string>
+    <string name="public_tracks_title">轨迹 %1$s</string>
+    <string name="public_tracks_details">已收录 %1$.2f 公里，共 %2$d 个原始分段。历史数据可能不完整，不会自动连接不同分段。</string>
+    <string name="public_tracks_navigate">沿此轨迹规划路线</string>
+    <string name="public_tracks_export">保存为 GPX</string>
+    <string name="public_tracks_clear">取消选中</string>
+    <string name="public_tracks_segment">选择一个连续的原始分段</string>
+    <string name="public_tracks_segment_item">分段 %1$d · %2$.2f 公里</string>
+    <string name="public_tracks_saved">已保存 GPX：%1$s</string>
+    <string name="public_tracks_error">无法读取路迹图层或保存轨迹。</string>
+    <string name="public_tracks_zoom">放大地图后选择路迹</string>
     <string name="email">电子邮件</string>
     <string name="poi_dialog_opening_hours">开放</string>
     <string name="poi_dialog_comment">评论</string>
