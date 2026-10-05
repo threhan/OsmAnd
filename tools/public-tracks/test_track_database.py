@@ -30,6 +30,16 @@ class TrackDatabaseTest(unittest.TestCase):
             tool.build(self.sample, self.output)
         self.assertEqual(b'existing user data', self.output.read_bytes())
 
+    def test_packaged_database_matches_geojson(self):
+        packaged = self.sample.with_suffix('.sqlite')
+        expected = tool.build(self.sample, self.output)
+        self.assertEqual(expected, tool.validate(packaged))
+        with closing(sqlite3.connect(packaged.resolve().as_uri() + '?mode=ro', uri=True)) as saved, \
+                closing(sqlite3.connect(self.output)) as generated:
+            for table, order in [('segments', 'id'), ('segment_bounds', 'id'), ('track_metadata', 'track_id')]:
+                sql = f'SELECT * FROM {table} ORDER BY {order}'
+                self.assertEqual(generated.execute(sql).fetchall(), saved.execute(sql).fetchall())
+
     def test_app_viewport_and_full_track_queries(self):
         tool.build(self.sample, self.output)
         with closing(sqlite3.connect(self.output)) as db:

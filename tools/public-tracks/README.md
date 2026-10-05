@@ -7,18 +7,33 @@ the weather cache. The reader is
 
 ## Quick start
 
+Ready-made example: [download synthetic-alps.sqlite](https://raw.githubusercontent.com/threhan/OsmAnd/master/tools/public-tracks/examples/synthetic-alps.sqlite).
+This **28 KiB (28,672 bytes)** database contains only the two artificial examples
+described below. Save it as `public-tracks.sqlite` to use the active layer filename.
+It is a complete, closed SQLite file; no WAL or sidecar files are required.
+
+SHA-256:
+`bc430b3675f3a98fbb071dfc3d2be02cfcb7e133f3c93027c2bd3873bd9f709b`
+
+Check a downloaded copy with `sha256sum synthetic-alps.sqlite` on Linux, or
+`Get-FileHash synthetic-alps.sqlite -Algorithm SHA256` in PowerShell. Follow
+[Load into this fork](#load-into-this-fork) before replacing an existing layer.
+The example is not a real hiking route and does not include an underlying map.
+
 Python 3.9 or newer, with the standard library only. From the repository root:
 
 ```sh
 python tools/public-tracks/track_database.py build tools/public-tracks/examples/synthetic-alps.geojson public-tracks.sqlite
 python tools/public-tracks/track_database.py validate public-tracks.sqlite
+python tools/public-tracks/track_database.py validate tools/public-tracks/examples/synthetic-alps.sqlite
 python -m unittest discover -s tools/public-tracks -p "test_*.py"
 ```
 
 Expected: **2 tracks, 3 segments, 10 points, user_version 1**. Output creation is
 exclusive: an existing database is never overwritten. Change the destination
-filename when rebuilding. Generated databases are local artifacts; do not add
-your real map/track database to this repository.
+filename when rebuilding. The small synthetic database is intentionally included
+as a ready-made fixture. Keep other generated databases local; do not add your
+real map/track database to this repository.
 
 ## Two non-sensitive examples outside China
 
