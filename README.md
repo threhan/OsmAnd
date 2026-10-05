@@ -1,6 +1,8 @@
 OsmAnd (OSM Automated Navigation Directions)
 ------------
 This project aims at providing comfortable map viewing and navigation (routing) application for mobile devices. Particular stress lies with complete offline features (via pre-loaded offline map data) or economic internet usage.
+
+For this fork's selectable hiking-track layer, see the [database format, creator and two synthetic Swiss Alps examples](tools/public-tracks/README.md).
 To get started, continue with the basic description below, then find more detail on our Welcome Wiki Pages, the Project Homepage, or the OpenStreetMap OsmAnd Wiki Page.
 You are welcome to discuss any question regarding the project at the Google group OsmAnd. Please do not use comments on wiki pages because it is rather difficult to find them.
 

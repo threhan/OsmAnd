@@ -1,0 +1,33 @@
+{
+  "type": "FeatureCollection",
+  "description": "Two invented format examples in the Swiss Alps coordinate region. Not recorded journeys or verified walking routes. No personal data, dates or third-party tracks.",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "track_id": "synthetic-alps-a",
+        "name": "Synthetic Alps A - format example only",
+        "source": "Artificial coordinates created for this repository"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[8.0000,46.5000],[8.0010,46.5005],[8.0020,46.5012],[8.0030,46.5015]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "track_id": "synthetic-alps-b",
+        "name": "Synthetic Alps B - two disconnected segments",
+        "source": "Artificial coordinates created for this repository"
+      },
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [[8.0010,46.5005],[8.0015,46.5010],[8.0018,46.5018]],
+          [[8.0040,46.5030],[8.0045,46.5035],[8.0050,46.5040]]
+        ]
+      }
+    }
+  ]
+}
