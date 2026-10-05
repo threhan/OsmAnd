@@ -54,14 +54,53 @@ public class WeatherHelper {
 	private final AtomicInteger bandsSettingsVersion = new AtomicInteger(0);
 	private final WeatherTotalCacheSize totalCacheSize;
 	private final ExecutorService cacheExecutor = Executors.newSingleThreadExecutor();
+	private final CachedWeatherTimes cachedWeatherTimes = new CachedWeatherTimes();
+	private final AtomicInteger cachedWeatherTimesVersion = new AtomicInteger();
+	private boolean offlineWeather;
+	private long nextConnectivityCheck;
+	public synchronized boolean isOfflineWeather() {
+		long now = android.os.SystemClock.elapsedRealtime();
+		if (now >= nextConnectivityCheck) {
+			boolean previous = offlineWeather;
+			offlineWeather = !app.getSettings().isInternetConnectionAvailable();
+			nextConnectivityCheck = now + 1000;
+			if (!previous && offlineWeather) refreshCachedWeatherTimes();
+		}
+		return offlineWeather;
+	}
+	public int getCachedWeatherTimesVersion() { return cachedWeatherTimesVersion.get(); }
+	public void refreshCachedWeatherTimes() {
+		cacheExecutor.execute(() -> {
+			cachedWeatherTimes.reload(getForecastCacheDir());
+			cachedWeatherTimesVersion.incrementAndGet();
+			app.runInUIThread(() -> app.getOsmandMap().getMapView().refreshMap());
+		});
+	}
+
+	public long resolveCachedWeatherTime(WeatherSource source, int x31, int y31, long time) {
+		return cachedWeatherTimes.resolve(source.getSettingValue(), x31, y31, time);
+	}
+
+	public long getOfflineWeatherTime(WeatherSource source, int x31, int y31, long time) {
+		return isOfflineWeather() ? resolveCachedWeatherTime(source, x31, y31, time) : time;
+	}
+
+	public long getOfflineMapWeatherTime(WeatherSource source, long time) {
+		net.osmand.plus.views.OsmandMapTileView view = app.getOsmandMap().getMapView();
+		return getOfflineWeatherTime(source, net.osmand.util.MapUtils.get31TileNumberX(view.getLongitude()),
+				net.osmand.util.MapUtils.get31TileNumberY(view.getLatitude()), time);
+	}
 	private List<WeakReference<WeatherWebClientListener>> downloadStateListeners = new ArrayList<>();
 	private final StateChangedListener<TemperatureUnitsMode> temperaturePreferenceListener = weatherUnit -> updateBandsSettings();
 	private WeatherWebClient webClient;
+	private final OpenForecastData openForecastData;
+	public OpenForecastData getOpenForecastData() { return openForecastData; }
 
 	private WeatherTileResourcesManager weatherTileResourcesManager;
 
 	public WeatherHelper(@NonNull OsmandApplication app) {
 		this.app = app;
+		this.openForecastData = new OpenForecastData(app);
 		this.weatherSettings = new WeatherSettings(app);
 		this.offlineForecastHelper = new OfflineForecastHelper(app);
 		this.totalCacheSize = offlineForecastHelper.getTotalCacheSize();
@@ -138,6 +177,7 @@ public class WeatherHelper {
 		webClient.swigReleaseOwnership();
 		weatherTileResourcesManager.setBandSettings(getBandSettings(weatherTileResourcesManager));
 		this.weatherTileResourcesManager = weatherTileResourcesManager;
+		refreshCachedWeatherTimes();
 		offlineForecastHelper.setWeatherResourcesManager(weatherTileResourcesManager);
 		
 		updateWeatherSource();
@@ -145,7 +185,7 @@ public class WeatherHelper {
 
 	public boolean shouldUpdateForecastCache() {
 		File dir = getForecastCacheDir();
-		return Algorithms.isEmpty(dir.listFiles());
+		return Algorithms.isEmpty(dir.listFiles()) || WeatherForecastCacheStore.needsImport(app);
 	}
 
 	public void updateForecastCacheAsync() {
@@ -155,7 +195,10 @@ public class WeatherHelper {
 	public void updateForecastCache(@NonNull String filePath) {
 		try {
 			OsmAndTaskManager.executeTask(new UpdateWeatherCacheTask(app, weatherTileResourcesManager, filePath), cacheExecutor).get();
-		} catch (ExecutionException | InterruptedException e) {
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			log.error(e);
+		} catch (ExecutionException e) {
 			log.error(e);
 		}
 	}
@@ -203,6 +246,7 @@ public class WeatherHelper {
 	}
 
 	public void updateWeatherSource(WeatherSource weatherSource) {
+		if (weatherSource.isExternal()) return;
 		WeatherTileResourcesManager weatherResourcesManager = getWeatherResourcesManager();
 		if (weatherResourcesManager == null) {
 			return;

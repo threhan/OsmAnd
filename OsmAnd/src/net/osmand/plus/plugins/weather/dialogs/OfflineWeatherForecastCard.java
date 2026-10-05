@@ -80,6 +80,17 @@ public class OfflineWeatherForecastCard extends MapBaseCard implements DownloadE
 	@Override
 	protected void updateContent() {
 		itemsContainer = view.findViewById(R.id.items_container);
+        net.osmand.plus.plugins.weather.WeatherPlugin plugin = net.osmand.plus.plugins.PluginsHelper.getPlugin(net.osmand.plus.plugins.weather.WeatherPlugin.class);
+        if (plugin != null && plugin.getWeatherSource().isExternal()) {
+            itemsContainer.removeAllViews();
+            TextView note = new TextView(mapActivity);
+            note.setText(R.string.open_weather_offline_note);
+            int padding = (int) (16 * mapActivity.getResources().getDisplayMetrics().density);
+            note.setPadding(padding, padding, padding, padding);
+            itemsContainer.addView(note);
+            return;
+        }
+
 
 		if (!downloadThread.getIndexes().isDownloadedFromInternet && settings.isInternetConnectionAvailable()) {
 			downloadThread.runReloadIndexFiles();

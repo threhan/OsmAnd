@@ -45,6 +45,10 @@ public class WeatherRasterLayer extends BaseMapLayer {
 	private long timePeriodStep;
 	private long dateTime;
 	private long cachedDateTime;
+	private long renderedTime;
+	private boolean localDataCached;
+	private int cachedTimesVersion = -1;
+	private final android.graphics.Paint timeLabel = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
 
 	private final List<StateChangedListener<Float>> alphaChangeListeners = new ArrayList<>();
 	private StateChangedListener<String> weatherSourceChangeListener;
@@ -86,6 +90,7 @@ public class WeatherRasterLayer extends BaseMapLayer {
 			}
 
 			resetLayerProvider();
+			if (!shouldDrawLayer()) return;
 			recreateLayerProvider(mapRenderer, resourcesManager);
 		};
 		weatherSettings.weatherSource.addListener(weatherSourceChangeListener);
@@ -164,7 +169,7 @@ public class WeatherRasterLayer extends BaseMapLayer {
 
 	@Override
 	public boolean drawInScreenPixels() {
-		return false;
+		return true;
 	}
 
 	@Override
@@ -179,11 +184,28 @@ public class WeatherRasterLayer extends BaseMapLayer {
 
 	@Override
 	public void onDraw(Canvas canvas, RotatedTileBox tilesRect, DrawSettings drawSettings) {
+		if (weatherLayer != WeatherLayer.LOW || plugin.getWeatherSource().isExternal()) return;
+		long sampleTime = weatherHelper.getOfflineMapWeatherTime(plugin.getWeatherSource(), dateTime);
+		if (plugin.isAnyDataVisible() && sampleTime != 0 && sampleTime != dateTime) {
+			String time = new java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+					.format(new java.util.Date(sampleTime));
+			String label = getApplication().getString(net.osmand.plus.R.string.weather_cached_sample_time, time);
+			float density = getApplication().getResources().getDisplayMetrics().density;
+			timeLabel.setTextSize(14 * density);
+			timeLabel.setColor(android.graphics.Color.BLACK);
+			timeLabel.setShadowLayer(3 * density, 0, 0, android.graphics.Color.WHITE);
+			canvas.drawText(label, 16 * density, tilesRect.getPixHeight() * 0.62f, timeLabel);
+		}
 	}
 
 	private void recreateLayerProvider(@NonNull MapRendererView mapRenderer, @NonNull WeatherTileResourcesManager resourcesManager) {
+		renderedTime = weatherHelper.getOfflineMapWeatherTime(plugin.getWeatherSource(), dateTime);
+		long start = renderedTime != dateTime ? renderedTime : timePeriodStart;
+		long end = renderedTime != dateTime ? renderedTime : timePeriodEnd;
+		long step = renderedTime != dateTime ? HOUR_IN_MILLISECONDS : timePeriodStep;
 		BandIndexList bands = new BandIndexList();
-		for (WeatherBand weatherBand : enabledBandsCached) {
+		// A source can change before the first prepare pass initializes the cache.
+		for (WeatherBand weatherBand : getVisibleBands()) {
 			short bandIndex = weatherBand.getBandIndex();
 			if (bandIndex != WeatherBand.WEATHER_BAND_NOTHING) {
 				bands.add(bandIndex);
@@ -195,7 +217,7 @@ public class WeatherRasterLayer extends BaseMapLayer {
 			if (provider == null) {
 				requireTimePeriodChange = false;
 				provider = new WeatherRasterLayerProvider(resourcesManager, weatherLayer,
-						timePeriodStart, timePeriodEnd, timePeriodStep, bands, false);
+						start, end, step, bands, weatherHelper.isOfflineWeather());
 				mapRenderer.setMapLayerProvider(view.getLayerIndex(this), provider);
 				MapLayerConfiguration mapLayerConfiguration = new MapLayerConfiguration();
 				mapLayerConfiguration.setOpacityFactor(1.0f);
@@ -203,10 +225,10 @@ public class WeatherRasterLayer extends BaseMapLayer {
 			}
 			if (requireTimePeriodChange) {
 				requireTimePeriodChange = false;
-				provider.setDateTime(timePeriodStart, timePeriodEnd, timePeriodStep);
+				provider.setDateTime(start, end, step);
 				mapRenderer.changeTimePeriod();
 			}
-			mapRenderer.setDateTime(dateTime);
+			mapRenderer.setDateTime(renderedTime);
 		}
 	}
 
@@ -222,6 +244,7 @@ public class WeatherRasterLayer extends BaseMapLayer {
 	@Override
 	public void onPrepareBufferImage(Canvas canvas, RotatedTileBox tilesRect, DrawSettings drawSettings) {
 		super.onPrepareBufferImage(canvas, tilesRect, drawSettings);
+		if (plugin.getWeatherSource().isExternal()) { resetLayerProvider(); return; }
 
 		MapRendererView mapRenderer = getMapRenderer();
 		WeatherTileResourcesManager resourcesManager = weatherHelper.getWeatherResourcesManager();
@@ -242,11 +265,19 @@ public class WeatherRasterLayer extends BaseMapLayer {
 	}
 
 	public boolean shouldDrawLayer() {
+		if (plugin.getWeatherSource().isExternal()) return false;
+		if (weatherHelper.getOfflineMapWeatherTime(plugin.getWeatherSource(), dateTime) == 0) return false;
 		return (weatherSettings.weatherEnabled.get() || plugin.hasCustomForecast())
 				&& !Algorithms.isEmpty(getVisibleBands());
 	}
 
 	private boolean shouldUpdateLayer() {
+		int timesVersion = weatherHelper.getCachedWeatherTimesVersion();
+		boolean timesChanged = cachedTimesVersion != timesVersion;
+		cachedTimesVersion = timesVersion;
+		boolean localData = weatherHelper.isOfflineWeather();
+		boolean localDataChanged = localData != localDataCached;
+		localDataCached = localData;
 		boolean weatherEnabled = weatherSettings.weatherEnabled.get() || plugin.hasCustomForecast();
 		boolean weatherEnabledChanged = weatherEnabled != weatherEnabledCached;
 		weatherEnabledCached = weatherEnabled;
@@ -259,13 +290,15 @@ public class WeatherRasterLayer extends BaseMapLayer {
 		boolean bandsSettingsChanged = bandsSettingsVersion != bandsSettingsVersionCached;
 		bandsSettingsVersionCached = bandsSettingsVersion;
 
-		boolean dateTimeChanged = cachedDateTime != dateTime;
-		cachedDateTime = dateTime;
+		long effectiveTime = weatherHelper.getOfflineMapWeatherTime(plugin.getWeatherSource(), dateTime);
+		boolean dateTimeChanged = cachedDateTime != effectiveTime || renderedTime != effectiveTime;
+		cachedDateTime = effectiveTime;
+		if (dateTimeChanged) requireTimePeriodChange = true;
 
-		if (weatherEnabledChanged || layersChanged || bandsSettingsChanged)
+		if (weatherEnabledChanged || layersChanged || bandsSettingsChanged || localDataChanged || timesChanged)
 			resetLayerProvider();
 
-		return weatherEnabledChanged || layersChanged || bandsSettingsChanged || dateTimeChanged;
+		return weatherEnabledChanged || layersChanged || bandsSettingsChanged || dateTimeChanged || localDataChanged || timesChanged;
 	}
 
 	@NonNull

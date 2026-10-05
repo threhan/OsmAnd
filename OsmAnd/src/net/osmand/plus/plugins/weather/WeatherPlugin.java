@@ -60,6 +60,8 @@ import net.osmand.plus.plugins.weather.actions.ShowHideWeatherLayersAction;
 import net.osmand.plus.plugins.weather.actions.ShowHideWindAnimationAction;
 import net.osmand.plus.plugins.weather.actions.ShowHideWindLayerAction;
 import net.osmand.plus.plugins.weather.dialogs.WeatherForecastFragment;
+import net.osmand.plus.plugins.weather.alerts.WeatherAlertsUi;
+import net.osmand.plus.plugins.weather.alerts.WeatherAlertJobService;
 import net.osmand.plus.plugins.weather.enums.WeatherSource;
 import net.osmand.plus.plugins.weather.units.WeatherUnit;
 import net.osmand.plus.plugins.weather.widgets.WeatherWidget;
@@ -113,6 +115,8 @@ public class WeatherPlugin extends OsmandPlugin {
 	private WeatherRasterLayer weatherLayerLow;
 	private WeatherRasterLayer weatherLayerHigh;
 	private WeatherContourLayer weatherContourLayer;
+	private OpenForecastLayer openForecastLayer;
+	public long getForecastTime() { return forecastDate != null ? forecastDate.getTime() : System.currentTimeMillis(); }
 	
 	private final List<WeatherSourceChangeListener> weatherSourceChangeListeners = new ArrayList<>();
 
@@ -170,6 +174,7 @@ public class WeatherPlugin extends OsmandPlugin {
 
 	@Override
 	public boolean init(@NonNull OsmandApplication app, @Nullable Activity activity) {
+		WeatherAlertJobService.schedule(app, false);
 		if (!app.getAppInitializer().isAppInitializing()) {
 			updateMapPresentationEnvironment();
 
@@ -400,6 +405,7 @@ public class WeatherPlugin extends OsmandPlugin {
 		if (weatherContourLayer != null) {
 			mapView.removeLayer(weatherContourLayer);
 		}
+		if (openForecastLayer != null) { mapView.removeLayer(openForecastLayer); openForecastLayer.destroyLayer(); }
 		createLayers();
 	}
 
@@ -432,8 +438,10 @@ public class WeatherPlugin extends OsmandPlugin {
 			if (!mapView.isLayerExists(weatherContourLayer)) {
 				mapView.addLayer(weatherContourLayer, ZORDER_CONTOURS);
 			}
+			if (!mapView.isLayerExists(openForecastLayer)) mapView.addLayer(openForecastLayer, 0.83f);
 			mapView.refreshMap();
 		} else {
+			if (openForecastLayer != null && mapView.isLayerExists(openForecastLayer)) mapView.removeLayer(openForecastLayer);
 			if (mapView.isLayerExists(weatherLayerLow)) {
 				mapView.removeLayer(weatherLayerLow);
 			}
@@ -449,6 +457,24 @@ public class WeatherPlugin extends OsmandPlugin {
 	@Override
 	public void registerOptionsMenuItems(@NonNull MapActivity mapActivity, @NonNull ContextMenuAdapter helper) {
 		if (isActive()) {
+            helper.addItem(new ContextMenuItem("forecast_comparison")
+                    .setTitleId(R.string.forecast_compare_title, mapActivity).setIcon(R.drawable.ic_action_umbrella)
+                    .setListener((uiAdapter, view, item, checked) -> {
+                        ForecastComparisonUi.show(mapActivity, mapActivity.getMapView().getLatitude(), mapActivity.getMapView().getLongitude(), null); return true;
+                    }));
+            helper.addItem(new ContextMenuItem("saved_forecast_places")
+                    .setTitleId(R.string.forecast_places_title, mapActivity)
+                    .setIcon(R.drawable.ic_action_umbrella)
+                    .setListener((uiAdapter, view, item, checked) -> {
+                        OpenForecastUi.showPlaces(mapActivity); return true;
+                    }));
+			helper.addItem(new ContextMenuItem("weather_point_alerts")
+					.setTitleId(R.string.weather_alert_title, mapActivity)
+					.setIcon(R.drawable.ic_action_umbrella)
+					.setListener((uiAdapter, view, item, isChecked) -> {
+						WeatherAlertsUi.show(mapActivity, mapActivity.getMapView().getLatitude(), mapActivity.getMapView().getLongitude());
+						return true;
+					}));
 			helper.addItem(new ContextMenuItem(DRAWER_WEATHER_FORECAST_ID)
 					.setTitleId(R.string.shared_string_weather, mapActivity)
 					.setIcon(R.drawable.ic_action_umbrella)
@@ -460,10 +486,35 @@ public class WeatherPlugin extends OsmandPlugin {
 		}
 	}
 
+	@Override
+	public void registerMapContextMenuActions(@NonNull MapActivity mapActivity, double latitude, double longitude,
+			@NonNull ContextMenuAdapter adapter, Object selectedObj, boolean configureMenu) {
+        adapter.addItem(new ContextMenuItem("forecast_comparison")
+                .setTitleId(R.string.forecast_compare_title, mapActivity).setIcon(R.drawable.ic_action_umbrella)
+                .setListener((uiAdapter, view, item, checked) -> {
+                    ForecastComparisonUi.show(mapActivity, latitude, longitude, null); return true;
+                }));
+		if (getWeatherSource().isExternal()) {
+			adapter.addItem(new ContextMenuItem("open_weather_point")
+				.setTitleId(R.string.open_weather_point_menu, mapActivity).setIcon(R.drawable.ic_action_umbrella)
+				.setListener((uiAdapter, view, item, checked) -> {
+					OpenForecastUi.show(mapActivity, latitude, longitude, getWeatherSource()); return true;
+				}));
+		}
+		adapter.addItem(new ContextMenuItem("weather_point_alerts")
+				.setTitleId(R.string.weather_alert_title, mapActivity)
+				.setIcon(R.drawable.ic_action_umbrella)
+				.setListener((uiAdapter, view, item, isChecked) -> {
+					WeatherAlertsUi.show(mapActivity, latitude, longitude);
+					return true;
+				}));
+	}
+
 	private void createLayers() {
 		weatherLayerLow = new WeatherRasterLayer(app, WeatherLayer.LOW);
 		weatherLayerHigh = new WeatherRasterLayer(app, WeatherLayer.HIGH);
 		weatherContourLayer = new WeatherContourLayer(app);
+		openForecastLayer = new OpenForecastLayer(app);
 		updateLayersDate(false, false);
 	}
 
@@ -482,7 +533,7 @@ public class WeatherPlugin extends OsmandPlugin {
 		WeatherRasterLayer weatherLayerLow = this.weatherLayerLow;
 		boolean shouldDrawRasterLayers = weatherLayerHigh != null && weatherLayerHigh.shouldDrawLayer()
 				|| weatherLayerLow != null && weatherLayerLow.shouldDrawLayer();
-		return shouldDrawRasterLayers || shouldDrawContoursLayer;
+		return shouldDrawRasterLayers || shouldDrawContoursLayer || (getWeatherSource().isExternal() && (isWeatherEnabled() || hasCustomForecast()));
 	}
 
 	public boolean isContoursEnabled() {
@@ -496,6 +547,7 @@ public class WeatherPlugin extends OsmandPlugin {
 	public void setWeatherSource(WeatherSource source) {
 		weatherHelper.updateWeatherSource(source);
 		weatherSettings.weatherSource.set(source.getSettingValue());
+		app.getOsmandMap().getMapView().refreshMap();
 
 		for (WeatherSourceChangeListener listener : weatherSourceChangeListeners) {
 			listener.onWeatherSourceChanged(source);

@@ -123,6 +123,7 @@ public class RequiredMapsFragment extends BaseFullScreenDialogFragment implement
 			app.getDialogManager().unregister(PROCESS_ID);
 			app.getSettings().setStopOnMissingMaps(false);
 		}
+		super.onDismiss(dialog);
 	}
 
 	protected void setupToolbar() {

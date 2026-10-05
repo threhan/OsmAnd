@@ -186,6 +186,12 @@ public class JsTtsCommandPlayer extends CommandPlayer {
 		for (String s : execute) {
 			bld.append(s).append(' ');
 		}
+		speakText(bld.toString());
+		return execute;
+	}
+
+	public synchronized void speakText(@NonNull String text) {
+		StringBuilder bld = new StringBuilder(text);
 		sendAlertToPebble(bld.toString());
 		if (mTts != null && !voiceRouter.isMute() && speechAllowed) {
 			if (ttsRequests++ == 0) {
@@ -218,7 +224,6 @@ public class JsTtsCommandPlayer extends CommandPlayer {
 		if (app != null && settings.DISPLAY_TTS_UTTERANCE.get()) {
 			app.showToastMessage(bld.toString());
 		}
-		return execute;
 	}
 
 	private void sendAlertToPebble(@NonNull String bld) {

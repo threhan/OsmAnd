@@ -56,6 +56,12 @@
 		android:layout="@layout/preference_category_with_descr"
 		android:title="@string/shared_string_other" />
 
+	<net.osmand.plus.settings.preferences.ListPreferenceEx
+		android:key="off_route_recalculation"
+		android:layout="@layout/preference_with_descr"
+		android:title="@string/offroute_policy_title"
+		android:summary="%s" />
+
 	<Preference
 		android:key="map_during_navigation"
 		android:layout="@layout/preference_with_descr"

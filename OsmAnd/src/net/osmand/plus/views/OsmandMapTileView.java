@@ -2737,6 +2737,17 @@ public class OsmandMapTileView implements IMapDownloaderCallback {
 		}
 	}
 
+	/** Resume a tap after an asynchronous layer found no matching objects. */
+	public boolean dispatchSingleTapAfter(@Nullable OsmandMapLayer previous, PointF point) {
+		List<OsmandMapLayer> layers = getLayers();
+		int start = previous == null ? layers.size() - 1 : layers.indexOf(previous) - 1;
+		if (previous != null && !layers.contains(previous)) return false;
+		for (int i = start; i >= 0; i--) {
+			if (layers.get(i).onSingleTap(point, getCurrentRotatedTileBox())) return true;
+		}
+		return onClickListener != null && onClickListener.onPressEvent(point);
+	}
+
 	public Resources getResources() {
 		return app.getResources();
 	}

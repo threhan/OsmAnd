@@ -690,6 +690,7 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 	@Override
 	protected void onResume() {
 		super.onResume();
+		app.getRoutingHelper().getOffRouteRecalculationUi().attach(this);
 		MapActivity mapViewMapActivity = getMapView().getMapActivity();
 		if (activityRestartNeeded || !getMapLayers().hasMapActivity()
 				|| (mapViewMapActivity != null && mapViewMapActivity != this)) {
@@ -1198,6 +1199,7 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 
 	@Override
 	protected void onPause() {
+		app.getRoutingHelper().getOffRouteRecalculationUi().detach(this);
 		super.onPause();
 		settings.LAST_MAP_ACTIVITY_PAUSED_TIME.set(System.currentTimeMillis());
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInMultiWindowMode()) {

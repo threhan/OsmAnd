@@ -1440,6 +1440,12 @@ public class OsmandSettings {
 	public final OsmandPreference<Boolean> DISABLE_OFFROUTE_RECALC =
 			new BooleanPreference(this, "disable_offroute_recalc", false).makeProfile();
 
+	public final CommonPreference<Integer> OFF_ROUTE_RECALCULATION =
+			new IntPreference(this, "off_route_recalculation", 0).makeProfile();
+	{
+		OFF_ROUTE_RECALCULATION.setModeDefaultValue(ApplicationMode.PEDESTRIAN, 1);
+	}
+
 	public final OsmandPreference<Boolean> DISABLE_WRONG_DIRECTION_RECALC =
 			new BooleanPreference(this, "disable_wrong_direction_recalc", false).makeProfile();
 

@@ -1,6 +1,6 @@
 package net.osmand.plus.settings.enums;
 
-import androidx.annotation.LayoutRes;
+import androidx.annotation.IdRes;
 import androidx.annotation.StringRes;
 
 import net.osmand.plus.R;
@@ -14,10 +14,10 @@ public enum SpeedSliderType {
 
 	@StringRes
 	public final int titleId;
-	@LayoutRes
+	@IdRes
 	public final int layoutId;
 
-	SpeedSliderType(@StringRes int titleId, @LayoutRes int layoutId) {
+	SpeedSliderType(@StringRes int titleId, @IdRes int layoutId) {
 		this.titleId = titleId;
 		this.layoutId = layoutId;
 	}

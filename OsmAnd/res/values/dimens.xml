@@ -1,4 +1,6 @@
 <resources>
+    <dimen name="weather_alert_padding">24dp</dimen>
+    <dimen name="weather_alert_row_padding">8dp</dimen>
     <dimen name="app_defaultsize_w">640dip</dimen>
     <dimen name="app_defaultsize_h">400dip</dimen>
     <dimen name="app_minimumsize_w">400dip</dimen>

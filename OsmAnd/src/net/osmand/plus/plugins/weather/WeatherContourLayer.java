@@ -47,6 +47,8 @@ public class WeatherContourLayer extends BaseMapLayer {
 	private int bandСached;
 	private long dateTime;
 	private long cachedDateTime;
+	private boolean localDataCached;
+	private int cachedTimesVersion = -1;
 
 	public WeatherContourLayer(@NonNull Context context) {
 		super(context);
@@ -115,7 +117,9 @@ public class WeatherContourLayer extends BaseMapLayer {
 		int cacheSize = (screenWidth * 2 / (int) resourcesManager.getTileSize()) * (screenHeight * 2 / (int) resourcesManager.getTileSize());
 		int rasterTileSize = (int) (resourcesManager.getTileSize() * resourcesManager.getDensityFactor());
 
-		geoTileObjectsProvider = new GeoTileObjectsProvider(resourcesManager, dateTime, band, false, cacheSize);
+		geoTileObjectsProvider = new GeoTileObjectsProvider(resourcesManager,
+				weatherHelper.getOfflineMapWeatherTime(plugin.getWeatherSource(), dateTime), band,
+				weatherHelper.isOfflineWeather(), cacheSize);
 		mapPrimitivesProvider = new MapPrimitivesProvider(geoTileObjectsProvider, mapPrimitiviser, rasterTileSize);
 
 		mapObjectsSymbolsProvider = new MapObjectsSymbolsProvider(mapPrimitivesProvider, rasterTileSize, null, true);
@@ -141,6 +145,7 @@ public class WeatherContourLayer extends BaseMapLayer {
 	@Override
 	public void onPrepareBufferImage(Canvas canvas, RotatedTileBox tilesRect, DrawSettings drawSettings) {
 		super.onPrepareBufferImage(canvas, tilesRect, drawSettings);
+		if (plugin.getWeatherSource().isExternal()) { resetLayerProvider(); mapActivityInvalidated = true; return; }
 
 		MapRendererView mapRenderer = getMapRenderer();
 		WeatherTileResourcesManager resourcesManager = weatherHelper.getWeatherResourcesManager();
@@ -165,20 +170,27 @@ public class WeatherContourLayer extends BaseMapLayer {
 	}
 
 	public boolean shouldDrawLayer() {
+		if (plugin.getWeatherSource().isExternal()) return false;
 		WeatherContour contour = plugin.hasCustomForecast()
 				? plugin.getSelectedForecastContoursType()
 				: plugin.getSelectedContoursType();
 		short band = contour != null ? contour.getBandIndex() : WEATHER_BAND_NOTHING;
-		return band != WEATHER_BAND_NOTHING && (plugin.hasCustomForecast() ||
-				plugin.isWeatherEnabled() && plugin.isContoursEnabled());
+		return shouldDrawLayer(band);
 	}
 
 	private boolean shouldDrawLayer(@WeatherBandType short band) {
-		return band != WEATHER_BAND_NOTHING && (plugin.hasCustomForecast() ||
+		return weatherHelper.getOfflineMapWeatherTime(plugin.getWeatherSource(), dateTime) != 0
+				&& band != WEATHER_BAND_NOTHING && (plugin.hasCustomForecast() ||
 				plugin.isWeatherEnabled() && plugin.isContoursEnabled());
 	}
 
 	private boolean shouldUpdateLayer(@WeatherBandType short band) {
+		int timesVersion = weatherHelper.getCachedWeatherTimesVersion();
+		boolean timesChanged = cachedTimesVersion != timesVersion;
+		cachedTimesVersion = timesVersion;
+		boolean localData = weatherHelper.isOfflineWeather();
+		boolean localDataChanged = localData != localDataCached;
+		localDataCached = localData;
 		WeatherUnit weatherUnit = null;
 		WeatherBand weatherBand = weatherHelper.getWeatherBand(band);
 		if (weatherBand != null) {
@@ -203,10 +215,11 @@ public class WeatherContourLayer extends BaseMapLayer {
 		boolean bandChanged = bandСached != band;
 		bandСached = band;
 
-		boolean dateTimeChanged = cachedDateTime != dateTime;
-		cachedDateTime = dateTime;
+		long effectiveTime = weatherHelper.getOfflineMapWeatherTime(plugin.getWeatherSource(), dateTime);
+		boolean dateTimeChanged = cachedDateTime != effectiveTime;
+		cachedDateTime = effectiveTime;
 
 		return weatherEnabledChanged || contoursEnabledChanged || transparencyChanged || bandChanged
-				|| weatherUnitChanged || dateTimeChanged;
+				|| weatherUnitChanged || dateTimeChanged || localDataChanged || timesChanged;
 	}
 }

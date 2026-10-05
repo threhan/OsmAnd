@@ -90,6 +90,32 @@ public class RoutingHelper {
 	private long deviateFromRouteDetected;
 	//private long wrongMovementDetected = 0;
 	private boolean voiceRouterStopped;
+	private final net.osmand.util.OffRouteRecalculationGate offRouteGate = new net.osmand.util.OffRouteRecalculationGate();
+	private final OffRouteRecalculationUi offRouteRecalculationUi = new OffRouteRecalculationUi(this);
+
+	public OffRouteRecalculationUi getOffRouteRecalculationUi() {
+		return offRouteRecalculationUi;
+	}
+
+	public synchronized long getPendingOffRouteRecalculation() {
+		if (!isFollowingMode || isPauseNavigation || !isDeviatedFromRoute || route.isEmpty()
+				|| settings.OFF_ROUTE_RECALCULATION.getModeValue(mode) != 1) {
+			offRouteGate.reset();
+		}
+		return offRouteGate.pendingToken();
+	}
+
+	public synchronized void answerOffRouteRecalculation(long token, boolean approve) {
+		if (token != 0 && token == getPendingOffRouteRecalculation()) {
+			offRouteGate.answer(token, approve);
+			// The next location update rechecks deviation before scheduling a calculation.
+		}
+	}
+
+	private void resetOffRouteRecalculation() {
+		offRouteGate.reset();
+		app.runInUIThread(offRouteRecalculationUi::refresh);
+	}
 
 	public boolean isDeviatedFromRoute() {
 		return isDeviatedFromRoute;
@@ -121,7 +147,8 @@ public class RoutingHelper {
 		routeWasFinished = false;
 	}
 
-	void setRoute(RouteCalculationResult route) {
+	synchronized void setRoute(RouteCalculationResult route) {
+		resetOffRouteRecalculation();
 		this.route = route;
 	}
 
@@ -207,7 +234,8 @@ public class RoutingHelper {
 		return isPauseNavigation;
 	}
 
-	public void setFollowingMode(boolean follow) {
+	public synchronized void setFollowingMode(boolean follow) {
+		if (!follow) resetOffRouteRecalculation();
 		app.logRoutingEvent("setFollowingMode follow " + follow);
 		isPausedOnAADisconnect = false;
 		isFollowingMode = follow;
@@ -242,6 +270,7 @@ public class RoutingHelper {
 	}
 
 	public synchronized void clearCurrentRoute(LatLon newFinalLocation, List<LatLon> newIntermediatePoints) {
+		resetOffRouteRecalculation();
 		app.logRoutingEvent("clearCurrentRoute newFinalLocation " + newFinalLocation + " newIntermediatePoints " + newIntermediatePoints);
 		routeWasFinished = false; // Prevent stale "arrived" state from leaking into the next navigation session
 		route = new RouteCalculationResult("");
@@ -338,7 +367,8 @@ public class RoutingHelper {
 		return route.getImmutableAllLocations();
 	}
 
-	public void setAppMode(@NonNull ApplicationMode mode) {
+	public synchronized void setAppMode(@NonNull ApplicationMode mode) {
+		if (this.mode != mode) resetOffRouteRecalculation();
 		this.mode = mode;
 		voiceRouter.updateAppMode();
 	}
@@ -418,7 +448,7 @@ public class RoutingHelper {
 		return RoutingHelperUtils.getOrthogonalDistance(lastFixedLocation, routeNodes.get(route.currentRoute - 1), routeNodes.get(route.currentRoute));
 	}
 
-	private Location setCurrentLocation(Location currentLocation, boolean returnUpdatedLocation,
+	private synchronized Location setCurrentLocation(Location currentLocation, boolean returnUpdatedLocation,
 	                                    RouteCalculationResult previousRoute, boolean targetPointsChanged) {
 		Location locationProjection = currentLocation;
 		if (isPublicTransportMode() && currentLocation != null && finalLocation != null &&
@@ -431,6 +461,7 @@ public class RoutingHelper {
 		}
 		if (finalLocation == null || currentLocation == null || isPublicTransportMode()) {
 			isDeviatedFromRoute = false;
+			resetOffRouteRecalculation();
 			return locationProjection;
 		}
 		float posTolerance = getPosTolerance(currentLocation.hasAccuracy() ? currentLocation.getAccuracy() : 0);
@@ -502,7 +533,9 @@ public class RoutingHelper {
 						voiceRouter.interruptRouteCommands();
 						voiceRouterStopped = true; // Prevents excessive execution of stop() code
 					}
-					voiceRouter.announceOffRoute(distOrth);
+					if (settings.OFF_ROUTE_RECALCULATION.getModeValue(mode) != 1) {
+						voiceRouter.announceOffRoute(distOrth);
+					}
 				}
 
 				// calculate projection of current location
@@ -527,6 +560,18 @@ public class RoutingHelper {
 			}
 		}
 
+		// Gate only automatic deviation recovery, never initial routing or explicit destination edits.
+		if (isFollowingMode && !isPauseNavigation && !route.isEmpty() && !targetPointsChanged) {
+			long previousToken = offRouteGate.pendingToken();
+			calculateRoute = offRouteGate.allow(route, settings.OFF_ROUTE_RECALCULATION.getModeValue(mode),
+					isDeviatedFromRoute, calculateRoute);
+			if (offRouteGate.pendingToken() != 0 && offRouteGate.pendingToken() != previousToken) {
+				voiceRouter.announceOffRouteConfirmation();
+			}
+		} else {
+			offRouteGate.reset();
+		}
+		app.runInUIThread(offRouteRecalculationUi::refresh);
 		if (calculateRoute) {
 			routeRecalculationHelper.recalculateRouteInBackground(currentLocation, finalLocation, intermediatePoints, currentGPXRoute,
 					previousRoute.isCalculated() ? previousRoute : null, false, !targetPointsChanged);

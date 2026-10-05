@@ -229,6 +229,17 @@ public class VoiceRouter {
 		return atd.getArrivalDistance();
 	}
 
+	public void announceOffRouteConfirmation() {
+		if (isMute() || !settings.SPEAK_ROUTE_DEVIATION.getModeValue(router.getAppMode())) return;
+		if (player instanceof net.osmand.plus.voice.JsTtsCommandPlayer tts) {
+			tts.speakText(app.getString(net.osmand.plus.R.string.offroute_confirm_voice));
+		} else {
+			CommandBuilder command = getNewCommandPlayerToPlay();
+			if (command != null) command.offRoute(router.getRouteDeviation());
+			play(command);
+		}
+	}
+
 	public void announceOffRoute(double dist) {
 		if (settings.SPEAK_ROUTE_DEVIATION.get() && dist > atd.getOffRouteDistance()) {
 			long ms = System.currentTimeMillis();

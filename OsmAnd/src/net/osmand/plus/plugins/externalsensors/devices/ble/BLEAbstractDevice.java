@@ -306,7 +306,7 @@ public abstract class BLEAbstractDevice extends AbstractDevice<BLEAbstractSensor
 	@SuppressLint("MissingPermission")
 	@Override
 	public boolean connect(@NonNull Context context, @Nullable Activity activity) {
-		if (!AndroidUtils.hasBLEPermission(activity)) {
+		if (!AndroidUtils.hasBLEPermission(context)) {
 			LOG.error("Try to connect " + deviceName + " while no ble permission");
 			return false;
 		}
@@ -337,7 +337,9 @@ public abstract class BLEAbstractDevice extends AbstractDevice<BLEAbstractSensor
 				}
 			}
 
-			connectAfterScan(context, deviceId);
+			if (!connectAfterScan(context, deviceId)) {
+				return false;
+			}
 			LOG.debug("Trying to create new connection " + device.getAddress() + ". gatt " + bluetoothGatt);
 			setCurrentState(DeviceConnectionState.CONNECTING);
 			for (DeviceListener listener : listeners) {
@@ -347,10 +349,19 @@ public abstract class BLEAbstractDevice extends AbstractDevice<BLEAbstractSensor
 		return true;
 	}
 
-	public void connectAfterScan(Context ctx, String targetAddress) {
+	public boolean connectAfterScan(Context ctx, String targetAddress) {
 		LOG.debug("scan to connect to " + targetAddress);
-		if (bluetoothAdapter != null && !bluetoothAdapter.isDiscovering()) {
+		if (!AndroidUtils.hasBLEPermission(ctx) || bluetoothAdapter == null) {
+			return false;
+		}
+		try {
+			if (!bluetoothAdapter.isEnabled() || bluetoothAdapter.isDiscovering()) {
+				return false;
+			}
 			BluetoothLeScanner scanner = bluetoothAdapter.getBluetoothLeScanner();
+			if (scanner == null) {
+				return false;
+			}
 			ScanSettings settings = new ScanSettings.Builder()
 					.setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
 					.setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
@@ -361,16 +372,26 @@ public abstract class BLEAbstractDevice extends AbstractDevice<BLEAbstractSensor
 			scanner.startScan(Collections.singletonList(filter), settings, new ScanCallback() {
 				@Override
 				public void onScanResult(int callbackType, ScanResult result) {
-					scanner.stopScan(this);
-					bluetoothGatt = result.getDevice().connectGatt(ctx, false, gattCallback, BluetoothDevice.TRANSPORT_AUTO);
+					try {
+						scanner.stopScan(this);
+						bluetoothGatt = result.getDevice().connectGatt(ctx, false, gattCallback, BluetoothDevice.TRANSPORT_AUTO);
+					} catch (SecurityException | IllegalStateException e) {
+						setCurrentState(DeviceConnectionState.DISCONNECTED);
+						LOG.warn("BLE scan connection no longer available", e);
+					}
 				}
 
 				@Override
 				public void onScanFailed(int errorCode) {
 					super.onScanFailed(errorCode);
+					setCurrentState(DeviceConnectionState.DISCONNECTED);
 					LOG.debug("robustScan failed " + errorCode);
 				}
 			});
+			return true;
+		} catch (SecurityException | IllegalStateException e) {
+			LOG.warn("Cannot start BLE connection scan", e);
+			return false;
 		}
 	}
 

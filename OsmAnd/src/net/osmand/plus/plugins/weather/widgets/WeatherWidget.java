@@ -62,9 +62,13 @@ public class WeatherWidget extends SimpleWidget {
 	private long lastDateTime;
 
 	private boolean lastObtainingFailed;
+	private String openRequest = "";
+	private long openRetryAt;
+	private int openGeneration;
 	private PointI lastDisplayedForecastPoint31;
 	private long lastDisplayedForecastTime;
 	private WeatherSource cachedWeatherSource;
+	private int cachedTimesVersion = -1;
 
 	public WeatherWidget(@NonNull MapActivity mapActivity, @NonNull WidgetType widgetType,
 			@Nullable String customId, @Nullable WidgetsPanel panel, short band) {
@@ -109,13 +113,17 @@ public class WeatherWidget extends SimpleWidget {
 	@Override
 	protected View.OnClickListener getOnClickListener() {
 		return v -> {
-			if (PluginsHelper.isActive(OsmandDevelopmentPlugin.class)) {
+			if (plugin.getWeatherSource().isExternal()) {
+                net.osmand.plus.plugins.weather.OpenForecastUi.show(mapActivity, mapActivity.getMapView().getLatitude(), mapActivity.getMapView().getLongitude(), plugin.getWeatherSource());
+            } else if (PluginsHelper.isActive(OsmandDevelopmentPlugin.class)) {
 				showForecastInfoToast();
 			}
 		};
 	}
 
 	private void onValueObtained(boolean success, @NonNull PointI requestedPoint31, long requestedTime, double value) {
+		if (plugin.getWeatherSource().isExternal()) return;
+		if (requestedTime != lastDateTime || cachedWeatherSource != plugin.getWeatherSource()) return;
 		WeatherTileResourcesManager resourcesManager = weatherHelper.getWeatherResourcesManager();
 		if (success && resourcesManager != null) {
 			lastObtainingFailed = false;
@@ -142,6 +150,11 @@ public class WeatherWidget extends SimpleWidget {
 		if (!Algorithms.isEmpty(formattedValue)) {
 			WeatherUnit bandUnit = weatherBand.getBandUnit();
 			String unit = bandUnit != null ? bandUnit.getUnit(app) : null;
+			if (lastDisplayedForecastTime != 0 && lastDisplayedForecastTime != getDateTime()) {
+				String separator = getContentLayoutId() == net.osmand.plus.R.layout.widget_custom_vertical ? "\n" : " · ";
+				unit = (unit == null ? "" : unit + separator) + new SimpleDateFormat("HH:mm", Locale.getDefault())
+						.format(new Date(lastDisplayedForecastTime));
+			}
 			WeatherSource weatherSource = plugin != null ? plugin.getWeatherSource() : null;
 			if (weatherSource == WeatherSource.ECMWF &&
 					(widgetType == WidgetType.WEATHER_CLOUDS_WIDGET || widgetType == WidgetType.WEATHER_WIND_WIDGET) &&
@@ -198,14 +211,30 @@ public class WeatherWidget extends SimpleWidget {
 				|| point31.getY() != lastPotition31.getY()
 				|| zoom.ordinal() != lastZoom.ordinal()
 				|| dateTime != lastDateTime
+				|| cachedTimesVersion != weatherHelper.getCachedWeatherTimesVersion()
 				|| weatherSourceChanged;
 	}
 
 	@Override
 	protected void updateSimpleWidgetInfo(@Nullable OsmandMapLayer.DrawSettings drawSettings) {
+		if (plugin.getWeatherSource().isExternal()) {
+			updateOpenForecast(); return;
+		}
 		PointI point31 = getPoint31();
 		ZoomLevel zoom = getZoom();
 		long dateTime = getDateTime();
+		if (point31 != null) {
+			dateTime = weatherHelper.getOfflineWeatherTime(plugin.getWeatherSource(), point31.getX(), point31.getY(), dateTime);
+		}
+		if (dateTime == 0) {
+			lastDateTime = 0;
+			lastDisplayedForecastTime = 0;
+			lastDisplayedForecastPoint31 = null;
+			app.removeMessagesInUiThread(hideOldDataMessageId);
+			// Already inside the panel update; refreshing the panel here would recurse.
+			setText(NO_VALUE, null);
+			return;
+		}
 
 		boolean scheduleDashShow = dateTime != lastDateTime;
 		if (!scheduleDashShow && lastDisplayedForecastPoint31 != null && point31 != null) {
@@ -230,7 +259,7 @@ public class WeatherWidget extends SimpleWidget {
 			request.setClientId(TAG);
 			request.setBand(band);
 			request.setDateTime(dateTime);
-			request.setLocalData(false);
+			request.setLocalData(weatherHelper.isOfflineWeather());
 			request.setPoint31(point31);
 			request.setZoom(zoom);
 			request.setAbortIfNotRecent(true);
@@ -238,9 +267,38 @@ public class WeatherWidget extends SimpleWidget {
 			lastZoom = zoom;
 			lastDateTime = dateTime;
 			cachedWeatherSource = plugin.getWeatherSource();
+			cachedTimesVersion = weatherHelper.getCachedWeatherTimesVersion();
 			resourcesManager.obtainValueAsync(request, callback.getBinding());
 		}
 	}
+
+	private void updateOpenForecast() {
+        WeatherSource source = plugin.getWeatherSource();
+        PointI point = getPoint31();
+        if (point == null) { setText(NO_VALUE, null); return; }
+        double lat = MapUtils.get31LatitudeY(point.getY());
+        double lon = MapUtils.get31LongitudeX(point.getX());
+        long time = getDateTime();
+        String key = String.format(Locale.US, "%s/%.3f/%.3f/%d", source, lat, lon, time);
+        if (key.equals(openRequest) && System.currentTimeMillis() < openRetryAt) return;
+        openRequest = key; openRetryAt = System.currentTimeMillis() + 60000;
+        int token = ++openGeneration;
+        setText(NO_VALUE, null);
+        app.runInUIThread(() -> {
+        if (token != openGeneration || plugin.getWeatherSource() != source || !key.equals(openRequest)) return;
+        weatherHelper.getOpenForecastData().request(source, java.util.Collections.singletonList(new net.osmand.data.LatLon(lat, lon)), (values, error) -> {
+            if (token != openGeneration || plugin.getWeatherSource() != source || !key.equals(openRequest) || getDateTime() != time) return;
+            if (values == null) { setText(NO_VALUE, null); return; }
+            Double value = values.get(0).value(net.osmand.plus.plugins.weather.OpenForecastData.variable(band), time);
+            PointI current = getPoint31();
+            if (current == null || getMetersBetweenPoints(current, point) > 100) return;
+            WeatherTileResourcesManager manager = weatherHelper.getWeatherResourcesManager();
+            if (value == null || manager == null) { setText(NO_VALUE, null); return; }
+            double raw = band == WeatherBand.WEATHER_BAND_PRESSURE ? value * 100 : band == WeatherBand.WEATHER_BAND_PRECIPITATION ? value / 3600 : value;
+            updateContent(manager.getFormattedBandValue(band, manager.getConvertedBandValue(band, raw), true));
+        });
+        }, 1000);
+    }
 
 	private void showForecastInfoToast() {
 		WeatherTileResourcesManager weatherResourcesManager = weatherHelper.getWeatherResourcesManager();

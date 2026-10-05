@@ -34,6 +34,7 @@ class ClearWeatherCacheTask extends AsyncTask<Void, Void, Void> {
 	@Override
 	protected Void doInBackground(Void... voids) {
 		clearOutdatedCache();
+		app.getWeatherHelper().refreshCachedWeatherTimes();
 		return null;
 	}
 
@@ -41,8 +42,11 @@ class ClearWeatherCacheTask extends AsyncTask<Void, Void, Void> {
 		totalCacheSize.reset();
 
 		long dateTime = OsmAndFormatter.getStartOfToday();
-		if (resourcesManager != null) {
-			resourcesManager.clearDbCache(dateTime);
+		try {
+			WeatherForecastCacheStore.prune(new java.io.File(app.getCacheDir(),
+					net.osmand.IndexConstants.WEATHER_FORECAST_DIR), dateTime);
+		} catch (Exception e) {
+			net.osmand.PlatformUtil.getLog(ClearWeatherCacheTask.class).error("Failed to expire weather cache", e);
 		}
 
 		List<String> downloadedRegionIds = offlineForecastHelper.getTempForecastsWithDownloadStates(FINISHED);

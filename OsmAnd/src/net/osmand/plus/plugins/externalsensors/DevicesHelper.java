@@ -693,6 +693,11 @@ public abstract class DevicesHelper implements DeviceListener, DevicePreferences
 	}
 
 	public boolean requestBLE() {
+		Activity activity = this.activity;
+		if (activity == null || activity.isFinishing() || activity.isDestroyed()
+				|| !AndroidUtils.hasBLEPermission(activity)) {
+			return false;
+		}
 		boolean bluetoothEnabled = true;
 		if (activity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
 			if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {

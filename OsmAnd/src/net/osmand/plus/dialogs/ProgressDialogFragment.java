@@ -64,6 +64,7 @@ public class ProgressDialogFragment extends BaseAlertDialogFragment {
 
 	@Override
 	public void onDismiss(@NonNull DialogInterface dialog) {
+		super.onDismiss(dialog);
 		if (onDismissListener != null) {
 			onDismissListener.onDismiss(dialog);
 		}

@@ -457,7 +457,9 @@ public class WeatherForecastFragment extends BaseFullScreenFragment implements W
 		plugin.setForecastDate(date, forAnimation, resetPeriod);
 		if (date != null)
 			date.setTime(WeatherUtils.roundForecastTimeToHour(date.getTime()));
-		checkDateOffset(date);
+		// Offline sample selection uses the package's actual coverage. Legacy
+		// three-hour rounding here could move an expired request back into it.
+		if (!app.getWeatherHelper().isOfflineWeather()) checkDateOffset(date);
 		widgetsPanel.setSelectedDate(date);
 		requireMapActivity().refreshMap();
 	}

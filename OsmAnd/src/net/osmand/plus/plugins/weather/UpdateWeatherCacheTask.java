@@ -42,6 +42,7 @@ class UpdateWeatherCacheTask extends AsyncTask<Void, Void, Void> {
 		} else {
 			importForecastCache(filePath);
 		}
+		app.getWeatherHelper().refreshCachedWeatherTimes();
 		return null;
 	}
 
@@ -53,10 +54,11 @@ class UpdateWeatherCacheTask extends AsyncTask<Void, Void, Void> {
 	}
 
 	private void importForecastCache(@NonNull String filePath) {
-		boolean updateForecastCache = false;
-		if (resourcesManager != null) {
-			updateForecastCache = resourcesManager.importDbCache(filePath);
+		try {
+			WeatherForecastCacheStore.importPackage(app, filePath);
+			LOG.info("Imported weather sources from " + filePath);
+		} catch (Exception e) {
+			LOG.error("Failed to import weather package " + filePath, e);
 		}
-		LOG.info("updateForecastCache " + filePath + " success " + updateForecastCache);
 	}
 }

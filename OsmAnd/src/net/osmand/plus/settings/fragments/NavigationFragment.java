@@ -93,6 +93,9 @@ public class NavigationFragment extends BaseSettingsFragment implements OnSelect
 		setupVehicleParametersPref();
 		showHideCustomizeRouteLinePref();
 		showTrackGuidancePref();
+		net.osmand.plus.settings.preferences.ListPreferenceEx offRoute = findPreference("off_route_recalculation");
+		offRoute.setEntries(new String[] {getString(R.string.offroute_auto), getString(R.string.offroute_ask), getString(R.string.offroute_disabled)});
+		offRoute.setEntryValues(new Integer[] {0, 1, 2});
 	}
 
 	private void setupNavigationTypePref() {

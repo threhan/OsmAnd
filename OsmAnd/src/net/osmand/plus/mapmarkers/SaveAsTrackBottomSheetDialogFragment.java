@@ -73,11 +73,12 @@ public class SaveAsTrackBottomSheetDialogFragment extends BottomSheetDialogFragm
 		descriptionTv.setText(openFromCoordinateInput
 				? getString(R.string.coord_input_save_as_track_descr, String.valueOf(number))
 				: getString(R.string.marker_save_as_track_descr));
-		contentLayout.addView(getLayoutInflater().inflate(R.layout.track_name_edit_text, contentLayout, false), 2);
+		View nameView = getLayoutInflater().inflate(R.layout.track_name_edit_text, contentLayout, false);
+		contentLayout.addView(nameView, 2);
 		if (portrait) {
 			AndroidUtils.setBackground(getActivity(), mainView, nightMode, R.drawable.bg_bottom_menu_light, R.drawable.bg_bottom_menu_dark);
 		}
-		View textBox = mainView.findViewById(R.id.name_text_box);
+		View textBox = nameView.findViewById(R.id.name_text_box);
 		if (nightMode) {
 			if (textBox instanceof TextInputLayout) {
 				((TextInputLayout) textBox).setHintTextAppearance(R.style.TextAppearance_App_DarkTextInputLayout);
@@ -91,7 +92,7 @@ public class SaveAsTrackBottomSheetDialogFragment extends BottomSheetDialogFragm
 		String suggestedName = getString(R.string.markers) + "_" + DateFormat.format("yyyy-MM-dd", date).toString();
 		String uniqueFileName = FileUtils.createUniqueFileName(app, suggestedName, dirName, IndexConstants.GPX_FILE_EXT);
 
-		EditText nameEditText = mainView.findViewById(R.id.name_edit_text);
+		EditText nameEditText = nameView.findViewById(R.id.name_edit_text);
 		nameEditText.setText(uniqueFileName);
 		nameEditText.setTextColor(primaryTextColor);
 
