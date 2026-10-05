@@ -178,6 +178,7 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 	private ExtendedMapActivity extendedMapActivity;
 
 	private LockHelper lockHelper;
+	private boolean keyguardFlagsEnabled;
 	private ImportHelper importHelper;
 	private IntentHelper intentHelper;
 	private MapScrollHelper mapScrollHelper;
@@ -228,9 +229,16 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 		}
 	};
 
-	private final StateChangedListener<Boolean> useSystemScreenTimeoutListener = new StateChangedListener<Boolean>() {
+	private final StateChangedListener<Boolean> lockScreenSettingListener = new StateChangedListener<Boolean>() {
 		@Override
 		public void stateChanged(Boolean change) {
+			app.runInUIThread(() -> changeKeyguardFlags());
+		}
+	};
+
+	private final StateChangedListener<Integer> turnScreenOnTimeListener = new StateChangedListener<Integer>() {
+		@Override
+		public void stateChanged(Integer change) {
 			app.runInUIThread(() -> changeKeyguardFlags());
 		}
 	};
@@ -283,7 +291,7 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 		InsetsUtils.processInsets(this, findViewById(R.id.drawer_layout), null, false);
 
 		if (WhatsNewDialogFragment.shouldShowDialog(app)) {
-			boolean showed = WhatsNewDialogFragment.showInstance(getSupportFragmentManager());
+			boolean showed = WhatsNewDialogFragment.showInstance(getSupportFragmentManager(), app);
 			if (showed) {
 				SecondSplashScreenFragment.SHOW = false;
 			}
@@ -555,6 +563,7 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 		super.onNewIntent(intent);
 		setIntent(intent);
 
+		fragmentsHelper.onNewIntent(intent);
 		importHelper.setUiActivity(this);
 		if (!intentHelper.parseLaunchIntents()) {
 			intentHelper.parseContentIntent();
@@ -824,7 +833,7 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 
 		routingHelper.addListener(this);
 		app.getMapMarkersHelper().addListener(this);
-		app.getAutoBackupHelper().requestAutoBackup();
+		app.getAutoBackupHelper().requestAutoBackupOnResume();
 
 		if (System.currentTimeMillis() - time > 50) {
 			LOG.error("onResume for MapActivity took " + (System.currentTimeMillis() - time) + " ms");
@@ -900,7 +909,9 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 		}
 
 		settings.MAP_SCREEN_ORIENTATION.addListener(mapScreenOrientationSettingListener);
-		settings.USE_SYSTEM_SCREEN_TIMEOUT.addListener(useSystemScreenTimeoutListener);
+		settings.USE_SYSTEM_SCREEN_TIMEOUT.addListener(lockScreenSettingListener);
+		settings.TURN_SCREEN_ON_POWER_BUTTON.addListener(lockScreenSettingListener);
+		settings.TURN_SCREEN_ON_TIME_INT.addListener(turnScreenOnTimeListener);
 		settings.ACCESSIBILITY_PINCH_ZOOM_MAGNIFICATION.addListener(pinchZoomMagnificationListener);
 
 		extendedMapActivity.onResume(this);
@@ -921,6 +932,7 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 		}
 	}
 
+	@Override
 	public void setKeepScreenOn(boolean keepScreenOn) {
 		if (mapViewWithLayers != null) {
 			mapViewWithLayers.setKeepScreenOn(keepScreenOn);
@@ -1212,7 +1224,9 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 
 	private void onPauseActivity() {
 		settings.MAP_SCREEN_ORIENTATION.removeListener(mapScreenOrientationSettingListener);
-		settings.USE_SYSTEM_SCREEN_TIMEOUT.removeListener(useSystemScreenTimeoutListener);
+		settings.USE_SYSTEM_SCREEN_TIMEOUT.removeListener(lockScreenSettingListener);
+		settings.TURN_SCREEN_ON_POWER_BUTTON.removeListener(lockScreenSettingListener);
+		settings.TURN_SCREEN_ON_TIME_INT.removeListener(turnScreenOnTimeListener);
 		settings.ACCESSIBILITY_PINCH_ZOOM_MAGNIFICATION.removeListener(pinchZoomMagnificationListener);
 		if (!app.getRoutingHelper().isRouteWasFinished()) {
 			DestinationReachedFragment.resetShownState();
@@ -1564,7 +1578,7 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 		}
 
 		if (event.getAction() == MotionEvent.ACTION_DOWN || event.getAction() == MotionEvent.ACTION_MOVE) {
-			lockHelper.resetLockTimerIfNeeded();
+			lockHelper.onUserInteraction();
 		}
 
 		if (settings.DO_NOT_USE_ANIMATIONS.get()) {
@@ -1700,19 +1714,23 @@ public class MapActivity extends OsmandActionBarActivity implements DownloadEven
 	}
 
 	public void changeKeyguardFlags() {
-		boolean enabled = settings.TURN_SCREEN_ON_TIME_INT.get() >= 0;
+		// Never request the lock screen flags unconditionally here: onStop() clears them, and as they
+		// decide whether the activity is visible while locked, that makes resume and stop chase each other.
 		boolean keepScreenOn = !settings.USE_SYSTEM_SCREEN_TIMEOUT.get();
-		changeKeyguardFlags(enabled, keepScreenOn);
+		changeKeyguardFlags(lockHelper.shouldShowWhenLocked(), keepScreenOn);
 	}
 
 	private void changeKeyguardFlags(boolean enable, boolean forceKeepScreenOn) {
-		if (enable) {
-			getWindow().setFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
-					WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
-		} else {
-			getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+		if (keyguardFlagsEnabled != enable) {
+			keyguardFlagsEnabled = enable;
+			if (enable) {
+				getWindow().setFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
+						WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+			} else {
+				getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+			}
 		}
-		setKeepScreenOn(forceKeepScreenOn);
+		lockHelper.setKeepScreenOn(forceKeepScreenOn);
 	}
 
 	@Override

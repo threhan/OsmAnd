@@ -150,7 +150,7 @@ public class WeatherContourLayer extends BaseMapLayer {
 		MapRendererView mapRenderer = getMapRenderer();
 		WeatherTileResourcesManager resourcesManager = weatherHelper.getWeatherResourcesManager();
 		if (view == null || mapRenderer == null || resourcesManager == null
-				|| resourcesManager.getBandSettings().empty()) {
+				|| !weatherHelper.hasBandSettings()) {
 			return;
 		}
 

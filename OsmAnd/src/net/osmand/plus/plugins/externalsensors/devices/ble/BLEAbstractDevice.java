@@ -360,6 +360,8 @@ public abstract class BLEAbstractDevice extends AbstractDevice<BLEAbstractSensor
 			}
 			BluetoothLeScanner scanner = bluetoothAdapter.getBluetoothLeScanner();
 			if (scanner == null) {
+				// getBluetoothLeScanner() returns null while Bluetooth is turned off
+				LOG.debug("BluetoothLeScanner not available on connect");
 				return false;
 			}
 			ScanSettings settings = new ScanSettings.Builder()
