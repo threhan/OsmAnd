@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Gyroscope / device-orientation toggle, inactive state. -->
+<svg width="240" height="240" viewBox="0 0 240 240" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="disc"><circle cx="120" cy="120" r="120"/></clipPath>
+  </defs>
+
+  <circle cx="120" cy="120" r="120" fill="#ffffff"/>
+  <g clip-path="url(#disc)">
+    <!-- orbit arrows (rotation about the vertical axis) -->
+    <g fill="none" stroke="#9aa4b0" stroke-width="9" stroke-linecap="round">
+      <path d="M52 96 A 74 40 0 0 1 188 96"/>
+      <path d="M188 144 A 74 40 0 0 1 52 144"/>
+    </g>
+    <path d="M188 96 l4 -20 -22 8 z" fill="#9aa4b0"/>
+    <path d="M52 144 l-4 20 22 -8 z" fill="#9aa4b0"/>
+
+    <!-- phone, tilted -->
+    <g transform="rotate(-18 120 120)">
+      <rect x="92" y="66" width="56" height="108" rx="12" fill="#3d4653" stroke="#1d2530" stroke-width="4"/>
+      <rect x="100" y="80" width="40" height="72" rx="4" fill="#93b7d6"/>
+      <!-- little horizon on the screen -->
+      <path d="M100 128 q20 -14 40 0 v24 h-40 z" fill="#5c8a4a"/>
+      <circle cx="120" cy="164" r="5" fill="#1d2530"/>
+    </g>
+  </g>
+  <circle cx="120" cy="120" r="118.5" fill="none" stroke="#10202b" stroke-width="3"/>
+</svg>

@@ -1,0 +1,205 @@
+package com.peaknav.pbf;
+
+import static com.peaknav.pbf.PbfLayer.PBF_HIGHWAYS;
+import static com.peaknav.pbf.PbfLayer.PBF_POI;
+import static com.peaknav.utils.PathUtils.findTileWithDataByZoomingOut;
+
+import com.peaknav.geo.BoundingBox;
+import com.peaknav.geo.LatLong;
+import com.peaknav.geo.Tile;
+
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Set;
+
+public class PbfMapDataStore {
+
+    private static final String TAG = "PbfMapDataStore";
+    private final PbfDataCache cache = new PbfDataCache();
+    // private Map<Tile, MapReadResult> cachedDataForTiles = new HashMap<>();
+    // private Map<Tile, MapReadResult> cachedDataForTilesPoi = new HashMap<>();
+
+    public PbfMapDataStore() {
+    }
+
+    private void insertWayIfContained(BoundingBox bb, Way way, MapReadResult mapReadResult) {
+        // A way's nodes can be missing (Way: a node outside the extract), as a whole ring or one point.
+        for (LatLong[] latLongs : way.latLongs) {
+            if (latLongs == null) {
+                continue;
+            }
+            for (LatLong latLong : latLongs) {
+                if (latLong != null && bb.contains(latLong)) {
+                    mapReadResult.ways.add(way);
+                    return;
+                }
+                // TODO: this could be speeded up by pre-caching the bounding box of ways:
+                // break;
+            }
+        }
+    }
+
+    private MapReadResult trimMapReadResultForSubTile(Tile tile, MapReadResult mapReadResultData) {
+        // TODO: is this necessary?
+        final BoundingBox bb = tile.getBoundingBox();
+        MapReadResult mapReadResult = new MapReadResult();
+        for (PointOfInterest poi : mapReadResultData.pointOfInterests) {
+            if (bb.contains(poi.position)) {
+                mapReadResult.pointOfInterests.add(poi);
+            }
+        }
+        for (Way way : mapReadResultData.ways) {
+            insertWayIfContained(bb, way, mapReadResult);
+        }
+        return mapReadResult;
+    }
+
+
+    private MapReadResult readMapDataByLayer(Tile tile, PbfLayer pbfLayer) {
+
+        Tile tileWithData = findTileWithDataByZoomingOut(tile, pbfLayer);
+        if (tileWithData == null) {
+            return new MapReadResult();
+        }
+
+        MapReadResult mapReadResultData = cache.get(tileWithData, pbfLayer);
+        if (tileWithData == tile) {
+            return mapReadResultData; // TODO: does this occur?
+        }
+        // TOO MUCH STORAGE: layerCache.put(tile, mapReadResult);
+        return trimMapReadResultForSubTile(tile, mapReadResultData);
+    }
+
+    public MapReadResult readMapData(Tile tile) {
+        return readMapDataByLayer(tile, PBF_HIGHWAYS);
+    }
+
+    public MapReadResult readPoiData(Tile tile) {
+        return readMapDataByLayer(tile, PBF_POI);
+    }
+
+    /**
+     * The ways of the map data covering this tile that pass through it, or near it: the tile's box
+     * is widened by {@code padFraction} of its size on every side, and a way is kept when any of
+     * its segments crosses that box - not only when one of its nodes falls inside, which would
+     * drop a straight road whose nodes all lie beyond a small tile it runs across.
+     */
+    public MapReadResult readMapDataPadded(Tile tile, double padFraction) {
+        return readMapDataPadded(tile, padFraction, PBF_HIGHWAYS);
+    }
+
+    /** As {@link #readMapDataPadded(Tile, double)}, from the ways of another layer. */
+    public MapReadResult readMapDataPadded(Tile tile, double padFraction, PbfLayer layer) {
+        Tile tileWithData = findTileWithDataByZoomingOut(tile, layer);
+        MapReadResult out = new MapReadResult();
+        if (tileWithData == null) {
+            return out;
+        }
+        MapReadResult data = cache.get(tileWithData, layer);
+        BoundingBox bb = tile.getBoundingBox();
+        double padLat = (bb.maxLatitude - bb.minLatitude) * padFraction;
+        double padLon = (bb.maxLongitude - bb.minLongitude) * padFraction;
+        double south = bb.minLatitude - padLat, north = bb.maxLatitude + padLat;
+        double west = bb.minLongitude - padLon, east = bb.maxLongitude + padLon;
+        for (Way way : data.ways) {
+            if (wayCrossesBox(way, south, west, north, east)) {
+                out.ways.add(way);
+            }
+        }
+        return out;
+    }
+
+    private static boolean wayCrossesBox(Way way, double south, double west, double north, double east) {
+        for (LatLong[] line : way.latLongs) {
+            for (int i = 0; i < line.length; i++) {
+                LatLong a = line[i];
+                if (a == null) {
+                    continue;
+                }
+                LatLong b = (i + 1 < line.length && line[i + 1] != null) ? line[i + 1] : a;
+                // A segment whose bounding box misses the box cannot cross it; one whose box meets
+                // it is kept, which admits the odd near miss - harmless, it is simply not drawn.
+                if (Math.max(a.latitude, b.latitude) >= south && Math.min(a.latitude, b.latitude) <= north
+                        && Math.max(a.longitude, b.longitude) >= west
+                        && Math.min(a.longitude, b.longitude) <= east) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The tile {@code dx} columns and {@code dy} rows from {@code center}: round the world
+     * across the antimeridian, and null above the first row or below the last. Built without
+     * this, a column of -1 or past the last one made Tile's constructor throw, and within two
+     * tiles of 180 degrees - Fiji, the Aleutians - no label was read at all.
+     */
+    static Tile neighbour(Tile center, int dx, int dy) {
+        int count = 1 << center.zoomLevel;
+        int row = center.tileY + dy;
+        if (row < 0 || row >= count) {
+            return null;
+        }
+        int column = ((center.tileX + dx) % count + count) % count;
+        return new Tile(column, row, center.zoomLevel, center.tileSize);
+    }
+
+    public void readPoiDataByRangeLazy(Tile tileCenter, int range, CallbackMapResult callbackMapResult) {
+
+        Set<Tile> tileSet = new HashSet<>();
+        for (int i = 0; i <= range; i++) {
+            for (int x = -i; x <= i; x++) {
+                for (int y = -i; y <= i; y++) {
+                    if (Math.abs(x) != i && Math.abs(y) != i)
+                        continue;
+                    Tile current = neighbour(tileCenter, x, y);
+                    if (current == null)
+                        continue;
+                    Tile supTile = findTileWithDataByZoomingOut(current, PbfLayer.PBF_POI);
+                    if (supTile != null)
+                        tileSet.add(supTile);
+                }
+            }
+        }
+        List<Tile> tiles = new LinkedList<>(tileSet);
+        Collections.sort(tiles, (t1, t2) -> {
+            int d1 = Math.abs(t1.tileX - tileCenter.tileX) + Math.abs(t1.tileY - tileCenter.tileY);
+            int d2 = Math.abs(t2.tileX - tileCenter.tileX) + Math.abs(t2.tileY - tileCenter.tileY);
+            return Integer.compare(d1, d2);
+        });
+        for (Tile tile : tiles) {
+            MapReadResult mapReadResult = readPoiData(tile);
+            callbackMapResult.call(mapReadResult);
+        }
+    }
+
+    public MapReadResult readPoiDataByRange(Tile tileCenter, int range) {
+        MapReadResult result = new MapReadResult();
+        for (int i = 0; i <= range; i++) {
+            for (int x = -i; x <= i; x++) {
+                for (int y = -i; y <= i; y++) {
+                    if (Math.abs(x) != i && Math.abs(y) != i)
+                        continue;
+                    if (x*x + y*y > i*i)
+                        continue;
+                    Tile current = neighbour(tileCenter, x, y);
+                    if (current == null)
+                        continue;
+                    result.add(readPoiData(current));
+                }
+            }
+        }
+        return result;
+    }
+
+    public synchronized void resetCache() {
+        cache.clear();
+    }
+
+    public interface CallbackMapResult {
+        void call(MapReadResult mapReadResult);
+    }
+}

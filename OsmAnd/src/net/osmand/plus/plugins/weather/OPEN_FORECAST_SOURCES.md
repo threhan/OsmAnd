@@ -213,3 +213,15 @@ remain unavailable. Network availability follows the application's connectivity
 check, so a connected but unusable proxy is not treated as offline automatically.
 This does not extend a package's forecast horizon, refresh an old package, or
 change the independent Open-Meteo caches used by saved-place comparison pages.
+
+## IFS HRES (2026-10-18)
+
+IFS HRES is an additional ECMWF 9 km source (`ecmwf_ifs`), separate from
+existing ECMWF 25 km (`ecmwf_ifs025`). It uses the external sampled map layer,
+point forecasts and comparison, with a 15-calendar-day point horizon.
+Map requests retain the seven-day window and bounded adaptive sampling;
+the overlay is not a native 9 km raster or a downloadable global weather package.
+The distinct setting value isolates both hourly and daily caches.
+Model-native hourly steps become coarser at longer lead times; Open-Meteo
+interpolates them for the hourly view. Missing values remain unknown.
+Source: https://open-meteo.com/en/docs/ecmwf-api

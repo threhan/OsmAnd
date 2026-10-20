@@ -67,7 +67,7 @@ object DailyForecastUi {
                 status.text = activity.getString(if (cached) R.string.forecast_daily_cached else R.string.forecast_daily_fetched, fetched, forecast.timezone) +
                     (if (error != null) "\n$error" else "")
                 fun value(v: Double?) = v?.let { String.format(Locale.getDefault(), "%.1f", it) } ?: activity.getString(R.string.forecast_daily_unknown)
-                for (day in forecast.upcoming(System.currentTimeMillis())) {
+                for (day in forecast.upcoming(System.currentTimeMillis(), place.source.pointForecastDays)) {
                     val rain = activity.getString(when (day.hasRain()) {
                         true -> R.string.forecast_daily_rain_yes
                         false -> R.string.forecast_daily_rain_no

@@ -1,0 +1,83 @@
+package com.peaknav.utils;
+
+import com.badlogic.gdx.graphics.Color;
+
+public interface Constants {
+
+    interface PREFERENCES {
+        String PREF_NAME = "PeakNav.prefs";
+
+        String FIRST_TIME_APP_RUN = "firstTimeAppRun";
+
+        String VIEWER_SHOW_PEAKS = "viewerShowPeaks";
+        String VIEWER_SHOW_PLACE_NAMES = "viewerShowPlaceNames";
+        String VIEWER_SHOW_ALPINE_HUTS = "viewerShowAlpineHuts";
+        String VIEWER_SHOW_ISLANDS = "viewerShowIslands";
+        String VIEWER_SHOW_CITIES = "viewerShowCities";
+        String VIEWER_SHOW_MOUNTAIN_RANGES = "viewerShowMountainRanges";
+        String VIEWER_SHOW_LAKES = "viewerShowLakes";
+        String VIEWER_SHOW_PISTES = "viewerShowPistes";
+        String VIEWER_SHOW_PISTE_LABELS = "viewerShowPisteLabels";
+        String VIEWER_SHOW_LIFTS = "viewerShowLifts";
+        String VIEWER_SHOW_LIFT_LABELS = "viewerShowLiftLabels";
+        String VIEWER_SHOW_ALL_LABELS = "viewerShowAllLabels";
+        String VIEWER_LARGE_FONTS = "viewerLargeFonts";
+        String VIEWER_LAYER_VISIBLE_UNDERLAY_LAYER = "viewerLayerVisibleUnderlayLayer";
+        String VIEWER_LAYER_VISIBLE_BASE_ROADS = "viewerLayerVisibleBaseRoads";
+        String VIEWER_SUN_SHADING = "viewerSunShading";
+        String VIEWER_HORIZON_COMPASS = "viewerHorizonCompass";
+        String VIEWER_COMPASS_LOCATION = "viewerCompassLocation";
+        String VIEWER_SHOW_COORDINATES = "viewerShowCoordinates";
+        String VIEWER_SHOW_ELEVATION = "viewerShowElevation";
+        String VIEWER_SHOW_MARKERS = "viewerShowMarkers";
+        String VIEWER_CORNER_COMPASS = "viewerCornerCompass";
+        String VIEWER_SKY = "viewerSky";
+        String VIEWER_SKY_CONSTELLATIONS = "viewerSkyConstellations";
+        String VIEWER_SKY_MODE = "viewerSkyMode";
+        String VIEWER_SKY_GRID = "viewerSkyGrid";
+        String VIEWER_SKY_ECLIPTIC = "viewerSkyEcliptic";
+        String VIEWER_SKY_STAR_NAMES = "viewerSkyStarNames";
+        String VIEWER_SKY_LABELS = "viewerSkyLabels";
+        String VIEWER_SKY_TIME_LABEL = "viewerSkyTimeLabel";
+        // How the roads and trails look (see com.peaknav.roads.RoadStyle).
+        String VIEWER_ROAD_COLOR_ROADS = "viewerRoadColorRoads";
+        String VIEWER_ROAD_COLOR_TRACKS = "viewerRoadColorTracks";
+        String VIEWER_ROAD_COLOR_TRAILS_EASY = "viewerRoadColorTrailsEasy";
+        String VIEWER_ROAD_COLOR_TRAILS_MOUNTAIN = "viewerRoadColorTrailsMountain";
+        String VIEWER_ROAD_COLOR_TRAILS_ALPINE = "viewerRoadColorTrailsAlpine";
+        String VIEWER_ROAD_DASH_COUNT = "viewerRoadDashCount";
+        String VIEWER_ROAD_DASH_SPEED = "viewerRoadDashSpeed";
+        String VIEWER_ROAD_NAMES = "viewerRoadNames";
+        String VIEWER_ROAD_LABEL_FREQUENCY = "viewerRoadLabelFrequency";
+        String UNDERLAY_IMAGE_PROVIDER = "underlayImageProviderChosen";
+        String VIEWER_UNIT_SYSTEM = "viewerUnitSystem";
+
+        String COLLECT_ANONYMOUS_STATS = "collectAnonStats";
+        String COLLECT_ANONYMOUS_STATS_QUERIED = "collectAnonStats";
+        String COLLECT_DOWNLOAD_INFO = "collectDownloadInfo";
+        // String COLLECT_ANONYMOUS_STATS_PROMPTED = "collectAnonStatsPrompted";
+        String LOCATION_PERMISSION_DENIED = "locationPermissionDenied";
+        // Desktop only: consent to estimate the position from the internet connection,
+        // which means handing the IP address to an online service. Asked once.
+        String IP_LOCATION_CONSENT = "ipLocationConsent";
+        // The interface language the user chose over the device's, as a two-letter code; empty
+        // for the device's own. Read when the app starts (I18NWrapper).
+        String LANGUAGE = "language";
+        String LAST_LATITUDE = "lastLatitude";
+        String LAST_LONGITUDE = "lastLongitude";
+
+        String COORDINATES_FIRST_TIME = "coordinatesFirstTime";
+
+        String LAST_CAMERA_DIRECTION_X = "lastCameraDirectionX";
+        String LAST_CAMERA_DIRECTION_Y = "lastCameraDirectionY";
+        String LAST_CAMERA_DIRECTION_Z = "lastCameraDirectionZ";
+        
+        String LAST_CAMERA_UP_X = "lastCameraUpX";
+        String LAST_CAMERA_UP_Y = "lastCameraUpY";
+        String LAST_CAMERA_UP_Z = "lastCameraUpZ";
+
+    }
+
+    float peakNavGrey = 0.5f;
+    Color peakNavGreyColor = new Color(peakNavGrey, peakNavGrey, peakNavGrey, 1.0f);
+}

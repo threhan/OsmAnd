@@ -62,8 +62,9 @@ class OpenForecastData(private val app: OsmandApplication) {
     private fun key(source: WeatherSource, p: LatLon) = String.format(Locale.US, "%s_%.4f_%.4f", source.settingValue, p.latitude, p.longitude)
     private fun load(source: WeatherSource, points: List<LatLon>, comparison: Boolean): List<Forecast> {
         val zone = if (comparison) java.util.TimeZone.getDefault().id else "GMT"
+        val forecastDays = if (comparison) source.pointForecastDays else 7
         val encodedZone = java.net.URLEncoder.encode(zone, "UTF-8")
-        fun cacheKey(point: LatLon) = (if (comparison) "compare7_${encodedZone}_" else "") + key(source, point)
+        fun cacheKey(point: LatLon) = (if (comparison) "compare${forecastDays}_${encodedZone}_" else "") + key(source, point)
         val now = System.currentTimeMillis()
         cache.mkdirs()
         val found = HashMap<String, Forecast>()
@@ -79,11 +80,11 @@ class OpenForecastData(private val app: OsmandApplication) {
             if (f != null && now - f.fetched in 0..TTL) { found[k] = f; memory[k] = f; false } else true
         }
         if (missing.isNotEmpty()) {
-            reserve(now, missing.size * if (comparison) 4 else 1)
+            reserve(now, missing.size * if (comparison) 4 * ((forecastDays + 6) / 7) else 1)
             val lat = missing.joinToString(",") { String.format(Locale.US, "%.4f", it.latitude) }
             val lon = missing.joinToString(",") { String.format(Locale.US, "%.4f", it.longitude) }
             val url = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&models=${model(source)}" +
-                "&hourly=${(VARIABLES + if (comparison) COMPARISON_UNITS.keys else emptySet()).joinToString(",")}&forecast_days=7&timeformat=unixtime&timezone=$encodedZone&wind_speed_unit=ms&temperature_unit=celsius&precipitation_unit=mm"
+                "&hourly=${(VARIABLES + if (comparison) COMPARISON_UNITS.keys else emptySet()).joinToString(",")}&forecast_days=$forecastDays&timeformat=unixtime&timezone=$encodedZone&wind_speed_unit=ms&temperature_unit=celsius&precipitation_unit=mm"
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 15000; conn.readTimeout = 20000
             try {
@@ -130,24 +131,29 @@ class OpenForecastData(private val app: OsmandApplication) {
         try {
             worker.execute {
                 var snapshot: DailyForecast? = null
+                var requestedDays = 0
                 try {
                     require(point.latitude.isFinite() && point.latitude in -90.0..90.0 &&
                         point.longitude.isFinite() && point.longitude in -180.0..180.0)
                     val now = System.currentTimeMillis()
                     val folder = File(app.cacheDir, "daily-weather-v1").apply { mkdirs() }
                     val file = File(folder, key(source, point) + ".json")
-                    if (file.exists() && now - file.lastModified() in 0..7 * 86400000L) {
-                        snapshot = try { DailyForecast.parse(JSONObject(file.readText()), file.lastModified()) } catch (_: Exception) { null }
+                    if (file.exists() && now - file.lastModified() in 0..16 * 86400000L) {
+                        snapshot = try {
+                            val json = JSONObject(file.readText())
+                            requestedDays = json.optInt("requested_forecast_days", 7)
+                            DailyForecast.parse(json, file.lastModified())
+                        } catch (_: Exception) { null }
                     }
                     val saved = snapshot
-                    if (!force && saved != null && saved.hasSnowfallData && now - saved.fetched in 0..TTL &&
+                    if (!force && saved != null && saved.hasSnowfallData && requestedDays >= source.pointForecastDays && now - saved.fetched in 0..TTL &&
                         saved.upcoming(now).first().date == saved.days.first().date) {
                         main.post { callback.complete(saved, true, null) }
                     } else {
-                        reserve(now, 1)
+                        reserve(now, (source.pointForecastDays + 6) / 7)
                         val coordinates = String.format(Locale.US, "latitude=%.5f&longitude=%.5f", point.latitude, point.longitude)
                         val url = "https://api.open-meteo.com/v1/forecast?$coordinates&models=${model(source)}" +
-                            "&daily=${DailyForecast.VARIABLES.joinToString(",")}&forecast_days=7&timezone=auto" +
+                            "&daily=${DailyForecast.VARIABLES.joinToString(",")}&forecast_days=${source.pointForecastDays}&timezone=auto" +
                             "&wind_speed_unit=ms&temperature_unit=celsius&precipitation_unit=mm"
                         val connection = URL(url).openConnection() as HttpURLConnection
                         connection.connectTimeout = 15000; connection.readTimeout = 20000
@@ -163,10 +169,11 @@ class OpenForecastData(private val app: OsmandApplication) {
                                 }
                                 text.toString()
                             }
-                            val forecast = DailyForecast.parse(JSONObject(body), now)
+                            val json = JSONObject(body).put("requested_forecast_days", source.pointForecastDays)
+                            val forecast = DailyForecast.parse(json, now)
                             val temp = File(folder, file.name + ".tmp")
                             try {
-                                temp.writeText(body); check(temp.renameTo(file)); file.setLastModified(now)
+                                temp.writeText(json.toString()); check(temp.renameTo(file)); file.setLastModified(now)
                             } finally { temp.delete() }
                             folder.listFiles()?.sortedByDescending { it.lastModified() }?.drop(400)?.forEach { it.delete() }
                             main.post { callback.complete(forecast, false, null) }
@@ -202,7 +209,7 @@ class OpenForecastData(private val app: OsmandApplication) {
             val units = json.getJSONObject("hourly_units")
             val expected = listOf("°C", "hPa", "m/s", "%", "mm", "°")
             VARIABLES.forEachIndexed { i, name -> check(units.getString(name) == expected[i]) }
-            check(times.length() in 1..384)
+            check(times.length() in 1..386)
             val hours = LongArray(times.length()) { times.getLong(it) * 1000 }
             check(hours.indices.drop(1).all { hours[it] - hours[it - 1] == 3600000L })
             val extra = COMPARISON_UNITS.filterKeys { hourly.has(it) }

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Gyroscope / device-orientation toggle, ACTIVE state: lit screen + bright arrows. -->
+<svg width="240" height="240" viewBox="0 0 240 240" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="disc"><circle cx="120" cy="120" r="120"/></clipPath>
+  </defs>
+
+  <circle cx="120" cy="120" r="120" fill="#e8f5ff"/>
+  <g clip-path="url(#disc)">
+    <!-- active glow -->
+    <circle cx="120" cy="120" r="120" fill="#cdeafc"/>
+
+    <!-- orbit arrows, active colour -->
+    <g fill="none" stroke="#2b8fe0" stroke-width="10" stroke-linecap="round">
+      <path d="M52 96 A 74 40 0 0 1 188 96"/>
+      <path d="M188 144 A 74 40 0 0 1 52 144"/>
+    </g>
+    <path d="M188 96 l4 -20 -22 8 z" fill="#2b8fe0"/>
+    <path d="M52 144 l-4 20 22 -8 z" fill="#2b8fe0"/>
+
+    <g transform="rotate(-18 120 120)">
+      <rect x="92" y="66" width="56" height="108" rx="12" fill="#243447" stroke="#0e1a28" stroke-width="4"/>
+      <rect x="100" y="80" width="40" height="72" rx="4" fill="#bfe6ff"/>
+      <path d="M100 128 q20 -14 40 0 v24 h-40 z" fill="#5fae4a"/>
+      <circle cx="120" cy="164" r="5" fill="#0e1a28"/>
+    </g>
+  </g>
+  <circle cx="120" cy="120" r="118.5" fill="none" stroke="#1c6fb0" stroke-width="4"/>
+</svg>

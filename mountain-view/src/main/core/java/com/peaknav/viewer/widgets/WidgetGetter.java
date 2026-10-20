@@ -1,0 +1,1175 @@
+package com.peaknav.viewer.widgets;
+
+import static com.peaknav.utils.PeakNavUtils.getC;
+import static com.peaknav.utils.PeakNavUtils.getNativeScreenCaller;
+import static com.peaknav.utils.PeakNavUtils.s;
+import static com.peaknav.utils.PreferencesManager.P;
+import static com.peaknav.utils.Units.formatDistanceToUnitSystem;
+
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.utils.Align;
+import com.badlogic.gdx.utils.Scaling;
+import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.Pixmap;
+import com.badlogic.gdx.graphics.Texture;
+import com.badlogic.gdx.math.Interpolation;
+import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.scenes.scene2d.Actor;
+import com.badlogic.gdx.scenes.scene2d.EventListener;
+import com.badlogic.gdx.scenes.scene2d.InputEvent;
+import com.badlogic.gdx.scenes.scene2d.actions.Actions;
+import com.badlogic.gdx.scenes.scene2d.ui.*;
+import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+
+import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
+import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
+import com.peaknav.viewer.MapApp;
+import com.peaknav.viewer.MapViewerSingleton;
+
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+
+public class WidgetGetter {
+    protected final float widgetUnitStep;
+    protected final float Bheight;
+    protected final float borderPad;
+    protected final MapApp mapApp;
+
+    private final TextureRegionDrawable textureRegionChecked;
+    private final TextureRegionDrawable textureRegionUnchecked;
+    private Label copyrightLabel;
+    private String copyrightNotice = "";
+    private TableLocation tableLocation;
+
+    public WidgetGetter(MapApp mapApp, float widgetUnitStep) {
+        this.mapApp = mapApp;
+        this.widgetUnitStep = widgetUnitStep;
+        this.Bheight = 0.7f*widgetUnitStep;
+        this.borderPad = 0.3f*widgetUnitStep;
+
+        textureRegionChecked = getC().widgetTextures.getUniformDrawable(Color.GREEN);
+        textureRegionUnchecked = getC().widgetTextures.getUniformDrawable(Color.WHITE);
+    }
+
+    public Table getTableWatermark() {
+        Table tableWatermark = new Table();
+
+        tableWatermark.left().top();
+        tableWatermark.setFillParent(true);
+
+        Label.LabelStyle labelStyle = getC().styleSingleton.getLabelWatermarkStyle();
+        Cell<Label> cell = null;
+
+        for (int i = 0; i < 12; i++) {
+            for (int j = 0; j < 12; j++) {
+                Label labelWatermark = new Label("peaknav.com", labelStyle);
+
+                cell = tableWatermark
+                        .add(labelWatermark)
+                        .padLeft(1.5f * widgetUnitStep)
+                        .padRight(1.5f * widgetUnitStep)
+                        .padTop(1f * widgetUnitStep)
+                        .padBottom(1f * widgetUnitStep);
+            }
+            if (cell != null)
+                cell.row();
+        }
+        return tableWatermark;
+    }
+
+    public Table getTableCopyright() {
+        Label.LabelStyle labelStyleVerySmall = new Label.LabelStyle();
+        labelStyleVerySmall.font = getC().styleSingleton.getBitmapFontVerySmall();
+        copyrightLabel = new Label(
+                P.getUnderlayImageProvider().getCopyrightNotice(), labelStyleVerySmall);
+
+        Table tableCopyright = new Table();
+        tableCopyright.setFillParent(true);
+        tableCopyright.right().bottom();
+        tableCopyright.add(copyrightLabel);
+        return tableCopyright;
+    }
+
+    /**
+     * Any thread: the labels are set on the render thread, which lays them out and draws them.
+     * The menus called this from their worker, and a label's text changed under the frame
+     * drawing it (libGDX's layouts and pools are not made for two threads).
+     */
+    public void setCopyrightLabel(final String copyrightNotice) {
+        this.copyrightNotice = copyrightNotice;
+        Gdx.app.postRunnable(() -> {
+            tableLocation.copyrightLabel.setText(copyrightNotice);
+            copyrightLabel.setText(copyrightNotice);
+        });
+    }
+
+    public static class HyperlinkLabel extends Table {
+        private final Label label;
+        private final String url;
+
+        public HyperlinkLabel(String text, Label.LabelStyle style, String url) {
+            super();
+            this.url = url;
+
+            if (style == null) {
+                style = getC().styleSingleton.getLabelStyleHyperlink();
+            }
+
+            label = new Label(text, style);
+            label.addListener(new ClickListener() {
+                @Override
+                public void clicked(InputEvent event, float x, float y) {
+                    Gdx.net.openURI(url);
+                }
+            });
+
+            add(label);
+        }
+
+        public void setText(CharSequence text) {
+            label.setText(text);
+        }
+    }
+
+    public static class ImageTextButtonOptionPane extends ImageTextButton {
+
+        public ImageTextButtonOptionPane(String text, ImageTextButtonStyle style) {
+            super(text, style);
+        }
+
+        /** A caption too long for its row slides rather than running past the button. */
+        @Override
+        protected Label newLabel(String text, Label.LabelStyle style) {
+            return new MarqueeLabel(text, style);
+        }
+
+        public void addClickListener(Runnable runnable) {
+            EventListener listener = new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    runnable.run();
+                    getC().dataRetrieveThreadManager.triggerUpdateVisibilityElevationChanged();
+                }
+            };
+            addListener(listener);
+        }
+    }
+
+    public static final String BACK_ICON = "icons/icon_back.png";
+    /** The name every menu's Back button carries. */
+    public static final String BACK_BUTTON_NAME = "menu_back";
+
+    public ImageTextButtonOptionPane getImageTextButton(String internalPath, String text, boolean toggable) {
+        ImageTextButton.ImageTextButtonStyle style = new ImageTextButton.ImageTextButtonStyle();
+
+        if (toggable) {
+            style.checked = textureRegionChecked;
+        }
+        style.down = textureRegionChecked;
+        style.up = textureRegionUnchecked;
+
+        float marginWidth = 0.3f*widgetUnitStep;
+
+        style.down.setRightWidth(marginWidth);
+        style.up.setRightWidth(marginWidth);
+
+        style.down.setLeftWidth(marginWidth);
+        style.up.setLeftWidth(marginWidth);
+
+        style.font = getC().styleSingleton.getBitmapFontSmall();
+        TextureRegionDrawable drawable;
+        if (internalPath == null) {
+            drawable = getC().widgetTextures.getUniformDrawable(Color.WHITE);
+        } else {
+            drawable = getC().widgetTextures.getTextureRegionDrawable(internalPath);
+        }
+        drawable.setMinWidth(widgetUnitStep);
+        drawable.setMinHeight(widgetUnitStep);
+        style.imageChecked = drawable;
+        style.imageUp = drawable;
+        ImageTextButtonOptionPane button = new ImageTextButtonOptionPane(text, style);
+        if (BACK_ICON.equals(internalPath)) {
+            // How the system Back key finds a menu's own Back button (OptionPane.pressBack).
+            button.setName(BACK_BUTTON_NAME);
+        }
+        // Consistent layout across every menu button: content hugs the left edge, the icon sits in a
+        // fixed square cell (scaled to fit so non-square icons are not stretched), and the label is
+        // left-aligned in the remaining width — so icons line up in one column and text in another,
+        // regardless of icon shape or label length.
+        button.left();
+        button.getImage().setScaling(Scaling.fit);
+        button.getImageCell().size(widgetUnitStep);
+        button.getLabelCell().padLeft(0.3f * widgetUnitStep).expandX().left();
+        button.getLabel().setAlignment(Align.left);
+        return button;
+    }
+
+    public TextButton getTextButton(String text, boolean toggable) {
+        TextButton.TextButtonStyle style = new TextButton.TextButtonStyle();
+        if (toggable) {
+            style.checked = textureRegionChecked;
+        }
+        style.down = textureRegionChecked;
+        style.up = textureRegionUnchecked;
+
+        float marginWidth = 0.3f*widgetUnitStep;
+
+        style.down.setRightWidth(marginWidth);
+        style.up.setRightWidth(marginWidth);
+
+        style.down.setLeftWidth(marginWidth);
+        style.up.setLeftWidth(marginWidth);
+
+        style.font = getC().styleSingleton.getBitmapFontSmall();
+        return new TextButton(text, style) {
+            @Override
+            protected Label newLabel(String text, Label.LabelStyle style) {
+                return new MarqueeLabel(text, style);
+            }
+        };
+    }
+
+    public class TableTool extends TableContainer {
+        public final Slider sliderElevation;
+        public final Table tableCameraControl;
+        public final Slider sliderCameraAlpha;
+        public final Button buttonOrientation;
+        /**
+         * Releases the photo pin; only while a point is pinned. Not in the layout: it is
+         * placed just above the elevation bar's top by {@link #placeUnpin}, so the bar
+         * itself never moves to make room for it.
+         */
+        public final Button buttonUnpin;
+        /** The button that runs the skyline match; pulsed by {@link #highlightMatchButton}. */
+        public final Button buttonMatchPhoto;
+        private boolean refreshNeeded;
+
+        TableTool() {
+            table.setFillParent(true);
+            table.left().top().row();
+
+            Button buttonGalleryPick = getC().widgetTextures.getButtonWithIcon(
+                    "icons/icon_gallery.png", null);
+            buttonGalleryPick.setName("gallery");   // for /widgets, which places the tutorial's markers
+            buttonGalleryPick.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    getNativeScreenCaller().openGalleryPick();
+                }
+            });
+            table.add(buttonGalleryPick).left().width(widgetUnitStep).height(widgetUnitStep)
+                    .padTop(borderPad).padLeft(borderPad).padRight(2*widgetUnitStep);
+
+            Button buttonCameraPicture = getC().widgetTextures.getButtonWithIcon(
+                    "icons/icon_camera.png", null);
+            buttonCameraPicture.setName("camera");   // for /widgets, which places the tutorial's markers
+            buttonCameraPicture.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    getNativeScreenCaller().openCameraPictureView();
+                }
+            });
+            // Where there is no camera to take a picture with - a computer - the cell stays,
+            // empty: everything else in this corner then keeps the place it had.
+            table.add(platformHas(true) ? buttonCameraPicture : null)
+                    .width(widgetUnitStep).left().height(widgetUnitStep)
+                    .padTop(borderPad)
+                    //.padLeft(borderPad)
+                    .row();
+
+            // Just above the elevation bar, in its column: the way out of the pinned mode
+            // (a double tap releases too, but a button is found without being told). Its
+            // row collapses to nothing while hidden, so the bar keeps its usual top.
+            buttonUnpin = getC().widgetTextures.getButtonWithIcon("icons/icon_unpin.png", null);
+            buttonUnpin.setName("unpin");   // for /widgets, which places the tutorial's markers
+            buttonUnpin.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    com.peaknav.gesture.PhotoPin.clear();
+                }
+            });
+            buttonUnpin.setVisible(false);
+            buttonUnpin.setSize(widgetUnitStep, widgetUnitStep);
+
+            Slider.SliderStyle sliderStyle = getC().styleSingleton.getSliderStyle();
+            sliderElevation = new Slider(0f, 100f, 0.1f, true, sliderStyle);
+            sliderElevation.setName("elevation_bar");   // for /widgets, which places the tutorial's markers
+            sliderElevation.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    float visualPerc = sliderElevation.getVisualPercent();
+                    mapApp.mapViewerScreen.setCameraElevationBar(visualPerc);
+                    float eleMeters = (float) mapApp.mapViewerScreen.getCameraElevationMeters();
+
+                    mapApp.mapViewerScreen.toast(
+                            " +" + formatDistanceToUnitSystem(eleMeters) + " ");
+                }
+            });
+            table.add(sliderElevation).expandY()
+                    .width(widgetUnitStep).left().height(widgetUnitStep *6)
+                    .padLeft(borderPad)
+                    .row();
+
+            buttonOrientation = getC().widgetTextures.getButtonWithIcon("icons/icon_gyro.png", "icons/icon_gyro_pressed.png");
+            buttonOrientation.setName("gyro");   // for /widgets, which places the tutorial's markers
+            // buttonOrientation.setProgrammaticChangeEvents(false);
+            buttonOrientation.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    // buttonOrientation.setChecked(!buttonOrientation.isChecked());
+                    // Only the gyroscope points the camera while it is on (see
+                    // MountainInputController.setCameraControlsSuspended).
+                    if (mapApp.mapViewerScreen.controller != null) {
+                        mapApp.mapViewerScreen.controller.setCameraControlsSuspended(buttonOrientation.isChecked());
+                    }
+                    if (buttonOrientation.isChecked()) {
+                        getNativeScreenCaller().getOrientationPointerListener().start();
+                    } else {
+                        getNativeScreenCaller().getOrientationPointerListener().stop();
+                        mapApp.mapViewerScreen.moveCameraAction.setCameraUp(Vector3.Z, true);
+                    }
+                }
+            });
+            // Likewise for a machine that cannot tell how it is being held. The button is
+            // still built - the photo match and the options pane un-check it - it is only
+            // never added, and the cell it would have filled holds the column open so the
+            // photo bar stays centred on the same line.
+            table.add(platformHas(false) ? buttonOrientation : null)
+                    .width(widgetUnitStep).height(widgetUnitStep)
+                    .padLeft(borderPad).padBottom(borderPad)
+                    .padRight(2*widgetUnitStep);
+
+            // table.add(buttonCameraPicture).width(widgetUnitStep).height(widgetUnitStep)
+                    // .padLeft(borderPad).padBottom(borderPad);
+                    //.row();
+
+            // The photo bar: the match button, the outline bar and the close button, on the
+            // line of the gyro, "?" and here buttons (its own table, so the gyro button's
+            // column does not push it about).
+            //
+            // Centred in the gap between the gyro button and "?", not on the screen. Both are
+            // anchored to the screen's edges - the gyro ends 1.3 buttons in from the left, "?"
+            // starts 2.8 in from the right - so that gap is centred 0.75 of a button left of
+            // the screen's middle, whatever its width. Centred on the screen instead, the bar
+            // (5.6 buttons wide, with a 3-button outline bar) put its close button over "?"
+            // on every phone in portrait, where the screen is 10 buttons across. With a
+            // 2.5-button outline bar it is 5.1 wide, 0.4 of a button clear of both.
+            tableCameraControl = new Table();
+            tableCameraControl.setFillParent(true);
+            tableCameraControl.bottom().padRight(1.5f * widgetUnitStep);
+            Slider.SliderStyle sliderStyleCA = new Slider.SliderStyle();
+            // From the screen's short side, as the elevation bar's knob: from its height, the knob
+            // was twice as large, and larger than its row, on a phone started upright than on
+            // one started sideways, and kept that size for good.
+            float w = Math.min(Gdx.graphics.getWidth(), Gdx.graphics.getHeight())
+                    * 0.05f * com.peaknav.utils.Units.getUiScale();
+            sliderStyleCA.knob = getC().widgetTextures.getTextureRegionDrawable("icons/icon_slider_alpha.png");
+            sliderStyleCA.knob.setMinHeight(w);
+            sliderStyleCA.knob.setMinWidth(w);
+            sliderStyleCA.background = getC().widgetTextures.getNinePatchDrawable("icons/slider_nine_patch.png");
+
+            buttonMatchPhoto = getC().widgetTextures.getButtonWithIcon(
+                    "icons/icon_match_photo.png", null);
+            buttonMatchPhoto.setName("photo_match");   // for /widgets, which places the tutorial's markers
+            buttonMatchPhoto.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    com.peaknav.viewer.PhotoSkylineAligner.matchNow();
+                }
+            });
+            tableCameraControl.add(buttonMatchPhoto).width(widgetUnitStep).height(widgetUnitStep)
+                    .padRight(borderPad).padBottom(borderPad);
+
+            sliderCameraAlpha = new Slider(0f, 1f, 0.05f, false, sliderStyleCA);
+            sliderCameraAlpha.setName("photo_outline_bar");   // for /widgets, which places the tutorial's markers
+            sliderCameraAlpha.setVisualPercent(1.0f);
+            sliderCameraAlpha.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    float alpha = sliderCameraAlpha.getVisualPercent();
+                    MapViewerSingleton.getViewerInstance().labelRenderer.setBackgroundAlpha(alpha);
+                }
+            });
+            tableCameraControl.add(sliderCameraAlpha).width(2.5f*widgetUnitStep).height(widgetUnitStep)
+                    .padBottom(borderPad);
+
+            Button buttonCameraCancel = getC().widgetTextures.getButtonWithIcon(
+                    "icons/icon_x.png", null
+            );
+            buttonCameraCancel.setName("photo_close");   // for /widgets, which places the tutorial's markers
+            buttonCameraCancel.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    hideTableCameraControl();
+                }
+            });
+            tableCameraControl.add(buttonCameraCancel).width(widgetUnitStep).height(widgetUnitStep)
+                    .padLeft(borderPad).padBottom(borderPad);
+            tableCameraControl.setVisible(false);
+        }
+
+        public void hideTableCameraControl() {
+            com.peaknav.viewer.PhotoSkylineAligner.clear();
+            MapViewerSingleton.getViewerInstance().backgroundPicManager.setBackgroundPixmap(null);
+            MapViewerSingleton.getViewerInstance().backgroundPicManager.setBackgroundTexture(null);
+            setPhotoShown(false);
+        }
+
+        /** How many times the match button pulses when a photo is ready to be matched. */
+        private static final int HIGHLIGHT_PULSES = 4;
+        private static final float HIGHLIGHT_HALF_PULSE = 0.45f;
+        // An instance field, not static: an inner class may only hold constant statics.
+        private final Color highlightTint = new Color(1f, 0.79f, 0.42f, 1f);   // the app's amber
+
+        /**
+         * Draws the eye to the match button for a few seconds, once a photo is loaded and
+         * the map has arrived at the place it was taken. The button swells and glows amber
+         * a few times and then sits still again: the skyline match is the one thing to do
+         * with a photo that nobody discovers on their own.
+         *
+         * <p>Safe to call repeatedly - a running pulse is replaced, never stacked - and
+         * from any thread, since it hops to the render thread itself.
+         */
+        public void highlightMatchButton() {
+            Gdx.app.postRunnable(new Runnable() {
+                @Override
+                public void run() {
+                    if (buttonMatchPhoto == null || !tableCameraControl.isVisible()) {
+                        return;   // no photo on screen: nothing to point at
+                    }
+                    buttonMatchPhoto.clearActions();
+                    // Scaling a Table only shows with a transform; the origin keeps it
+                    // swelling about its middle rather than its corner.
+                    buttonMatchPhoto.setTransform(true);
+                    buttonMatchPhoto.setOrigin(Align.center);
+                    buttonMatchPhoto.setScale(1f);
+                    buttonMatchPhoto.setColor(Color.WHITE);
+                    buttonMatchPhoto.addAction(Actions.sequence(
+                            Actions.repeat(HIGHLIGHT_PULSES, Actions.parallel(
+                                    Actions.sequence(
+                                            Actions.scaleTo(1.35f, 1.35f, HIGHLIGHT_HALF_PULSE, Interpolation.swingOut),
+                                            Actions.scaleTo(1f, 1f, HIGHLIGHT_HALF_PULSE, Interpolation.smooth)),
+                                    Actions.sequence(
+                                            Actions.color(highlightTint, HIGHLIGHT_HALF_PULSE),
+                                            Actions.color(Color.WHITE, HIGHLIGHT_HALF_PULSE)))),
+                            Actions.run(new Runnable() {
+                                @Override
+                                public void run() {
+                                    stopHighlightingMatchButton();
+                                }
+                            })));
+                }
+            });
+        }
+
+        /** Puts the button back exactly as it was, however far through the pulse it is. */
+        public void stopHighlightingMatchButton() {
+            if (buttonMatchPhoto == null) {
+                return;
+            }
+            buttonMatchPhoto.clearActions();
+            buttonMatchPhoto.setScale(1f);
+            buttonMatchPhoto.setColor(Color.WHITE);
+            buttonMatchPhoto.setTransform(false);   // back to the cheap draw path
+        }
+
+        /** Shows or hides everything that only makes sense with a photo behind the terrain. */
+        public void setPhotoShown(boolean shown) {
+            tableCameraControl.setVisible(shown);
+            if (!shown) {
+                setPinned(false);
+                stopHighlightingMatchButton();
+            }
+            MapViewerSingleton.getViewerInstance().tableLocation.setPhotoShown(shown);
+        }
+
+        /** Shows the unpin button while a point is pinned, just above the elevation bar. */
+        public void setPinned(boolean pinned) {
+            if (buttonUnpin.isVisible() != pinned) {
+                buttonUnpin.setVisible(pinned);
+            }
+            if (pinned) {
+                placeUnpin();
+            }
+        }
+
+        private final com.badlogic.gdx.math.Vector2 unpinAnchor = new com.badlogic.gdx.math.Vector2();
+
+        /** Puts the unpin button on the elevation bar's column, one pad above its top. */
+        private void placeUnpin() {
+            unpinAnchor.set(0, sliderElevation.getHeight());
+            sliderElevation.localToStageCoordinates(unpinAnchor);
+            float x = unpinAnchor.x + (sliderElevation.getWidth() - buttonUnpin.getWidth()) / 2;
+            float y = unpinAnchor.y + borderPad;
+            if (buttonUnpin.getX() != x || buttonUnpin.getY() != y) {
+                buttonUnpin.setPosition(x, y);
+            }
+        }
+
+        public void setRefreshNeeded(boolean refreshNeeded) {
+            this.refreshNeeded = refreshNeeded;
+        }
+
+        public boolean isRefreshNeeded() {
+            return refreshNeeded;
+        }
+    }
+
+    public TableTool getTableTool() {
+        return new TableTool();
+    }
+
+    public class TableDownloadData extends TableContainer {
+
+        /** The banner's downloads, one after another; MissingDataDownloader runs one at a time anyway. */
+        private final java.util.concurrent.ExecutorService BANNER_DOWNLOADS =
+                java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                    Thread t = new Thread(r, "banner-download");
+                    t.setDaemon(true);
+                    return t;
+                });
+
+        public TableDownloadData() {
+
+            Button textButton = getImageTextButton(
+                    "icons/icon_checkbox_download_data.png",
+                    s("Missing_data_prompt_download"), false);
+            textButton.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    final double lat = getC().L.getTargetLatitude();
+                    final double lon = getC().L.getTargetLongitude();
+                    // One thread for these, not a new one per press, never shut down; and the
+                    // banner hidden here, on the render thread, not from the download's.
+                    BANNER_DOWNLOADS.execute(() -> getC().checkMissingData.downloadMissingData(lat, lon));
+                    table.setVisible(false);
+                }
+            });
+            Button dismiss = getC().widgetTextures.getButtonWithIcon(
+                    "icons/icon_x.png", null
+            );
+            // TextButton dismiss = new TextButton(s("Missing_data_dismiss"), textButtonStyle);
+            dismiss.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    getC().checkMissingData.dismiss(
+                            getC().L.getTargetLatitude(),
+                            getC().L.getTargetLongitude()
+                    );
+                    table.setVisible(false);
+                }
+            });
+            table.top().padTop(2*borderPad+widgetUnitStep).left();
+            table.setFillParent(true);
+            // table.add(label).padLeft(borderPad + widgetUnitStep).padTop(2*borderPad+widgetUnitStep).left().row();
+            table.add(textButton).padLeft(borderPad + 1.5f*widgetUnitStep)
+                    .left().padRight(borderPad);
+            table.add(dismiss).width(widgetUnitStep).height(widgetUnitStep).left().row();
+            table.setVisible(false);
+        }
+    }
+
+    public TableDownloadData getTableDownloadData() {
+        return new TableDownloadData();
+    }
+
+    /**
+     * Whether this platform has the camera ({@code camera} true) or the motion sensors
+     * ({@code camera} false) behind one of the two device buttons. Written as one helper
+     * because both cells ask the same question of a caller that may not be set yet - and
+     * when it is not, the buttons stay, which is what every platform but the desktop wants.
+     */
+    private static boolean platformHas(boolean camera) {
+        com.peaknav.compatibility.NativeScreenCaller caller = getNativeScreenCaller();
+        if (caller == null) {
+            return true;
+        }
+        return camera ? caller.hasCamera() : caller.hasOrientationSensors();
+    }
+
+    public class TableLocation extends TableContainer {
+
+        public final Button optionsButton;
+        public final Button helpButton;
+        private final Button hereButton;
+        private final TextureRegionDrawable icon_here;
+        private final TextureRegionDrawable icon_here_gps;
+        public final Button buttonGoToDest;
+        public final Button buttonOrbitDest;
+        public final Button buttonOpenCoordinate;
+        /** Walks to the tapped point along the map's paths, as a GPX track. */
+        public final Button buttonRouteToDest;
+        public final Button buttonSaveMarker;
+        private final Button buttonCancelGoToDest;
+        public final Table tableCancelGoToDest;
+        /** Opacity of the rendered terrain over a photo; shown only while a photo is up. */
+        public final Slider sliderTerrainAlpha;
+        /** Debug builds only: saves the photo, pose and overlay as a dataset sample; null otherwise. */
+        public final Button buttonSaveSample;
+        /**
+         * The photo-only widgets of the right edge - the terrain-opacity bar and, in debug
+         * builds, the save button above it - in a group of their own, placed just above
+         * the share button by {@link #placePhotoColumn} rather than laid out in the
+         * column, so the share and here buttons never move for them.
+         */
+        public final Table photoColumn;
+        private Button shareButton;
+        public final Button buttonGpxFly; // cinematic tour of the loaded GPX; shown only when one is loaded
+        public final Button buttonGpxClear; // discards the loaded GPX; shown alongside buttonGpxFly
+        /** Saves (desktop) or shares (phone) a GPX that exists nowhere else: downloaded, or made on the map. */
+        public final Button buttonGpxShare;
+        public final Label copyrightLabel;
+        /** Scrub bar for the GPX tour: shown only while one is running, drag to jump along it. */
+        public final Table gpxSeekTable;
+        public final Slider gpxSeekSlider;
+        public final Table progressBarTable;
+        public final ProgressBar progressBar;
+        /** The download's progress as a percentage, drawn over the middle of {@link #progressBar}. */
+        public final Label progressPercentLabel;
+        /** Stops the download under way, once confirmed; under {@link #progressBar}. */
+        public final Button buttonCancelDownload;
+
+        /**
+         * Shows how far the map data download has got, 0 to 1, on the bar and as a percentage.
+         * Called from the download workers: the label's text is set on the render thread, which
+         * is the one that lays it out and draws it.
+         */
+        public void setDownloadProgress(final float ratio) {
+            final int percent = Math.max(0, Math.min(100, (int) Math.floor(ratio * 100f)));
+            // The bar hides once the ratio passes 0.999, and so does the percentage in the
+            // middle of the screen. All of it on the render thread, in the order it was asked
+            // for: the bar was set from the download's workers, firing a change event from
+            // there, and could overtake the "0 %" posted at the start, leaving it stuck at 0.
+            final boolean finished = ratio > 0.999f;
+            Gdx.app.postRunnable(() -> {
+                progressBar.setValue(ratio);
+                progressBarTable.setVisible(!finished);
+                progressPercentLabel.setText(percent + "%");
+                com.peaknav.viewer.screens.LabelLoading labelLoading = mapApp.mapViewerScreen.labelLoading;
+                if (labelLoading != null) {
+                    labelLoading.setDownloadPercent(finished ? -1 : percent);
+                }
+            });
+        }
+
+        /** Takes the bar and the percentage away, leaving them at 0 for the next download. */
+        public void hideDownloadProgress() {
+            Gdx.app.postRunnable(() -> {
+                progressBar.setValue(0f);
+                progressBarTable.setVisible(false);
+                progressPercentLabel.setText("0%");
+                com.peaknav.viewer.screens.LabelLoading labelLoading = mapApp.mapViewerScreen.labelLoading;
+                if (labelLoading != null) {
+                    labelLoading.setDownloadPercent(-1);
+                }
+            });
+        }
+
+        public void setButtonHereFromGps() {
+            if (getC().L.isTargetSetFromGPS()) {
+                hereButton.getStyle().up = icon_here_gps;
+            } else {
+                hereButton.getStyle().up = icon_here;
+            }
+            hereButton.invalidate();
+        }
+
+        public TableLocation() {
+
+            table.right().top();
+            table.setFillParent(true);
+
+            // GPX scrub bar, along the bottom of the screen and clear of the side button columns.
+            gpxSeekTable = new Table();
+            gpxSeekTable.bottom();
+            gpxSeekTable.setFillParent(true);
+            gpxSeekTable.setVisible(false);
+
+            Slider.SliderStyle gpxSeekStyle = new Slider.SliderStyle();
+            gpxSeekStyle.knob = getC().widgetTextures.getTextureRegionDrawable(
+                    "icons/icon_slider_alpha.png");
+            gpxSeekStyle.knob.setMinHeight(0.55f * widgetUnitStep);
+            gpxSeekStyle.knob.setMinWidth(0.55f * widgetUnitStep);
+            // A thin track, sized from the widget unit: a slider draws its background at the
+            // background's own minimum height, and the nine-patch's 50 px made the bar a thick band
+            // whatever the cell said, larger still on a dense screen.
+            TextureRegionDrawable gpxSeekTrack = new TextureRegionDrawable(
+                    getC().widgetTextures.getUniformDrawable(new Color(0f, 0f, 0f, 0.55f)));
+            gpxSeekTrack.setMinHeight(0.16f * widgetUnitStep);
+            gpxSeekTrack.setMinWidth(widgetUnitStep);
+            gpxSeekStyle.background = gpxSeekTrack;
+            gpxSeekSlider = new Slider(0f, 1f, 0.002f, false, gpxSeekStyle);
+            // Measured in stage units, like the rest of the interface, and from the table as laid
+            // out: the screen's width in pixels made the bar too wide wherever the two differ, and
+            // it did not follow the window when it was resized.
+            gpxSeekTable.add(gpxSeekSlider)
+                    .width(new com.badlogic.gdx.scenes.scene2d.ui.Value() {
+                        @Override
+                        public float get(com.badlogic.gdx.scenes.scene2d.Actor context) {
+                            return Math.max(2f * widgetUnitStep, gpxSeekTable.getWidth() - 6f * widgetUnitStep);
+                        }
+                    })
+                    .height(0.5f * widgetUnitStep)
+                    .padBottom(2.2f * widgetUnitStep);
+
+            progressBarTable = new Table();
+            progressBarTable.top().right();
+            progressBarTable.setFillParent(true);
+            progressBarTable.setVisible(false);
+
+            ProgressBar.ProgressBarStyle progressBarStyle = new ProgressBar.ProgressBarStyle();
+
+            Pixmap pixmap = new Pixmap(Math.round(widgetUnitStep), Math.round(widgetUnitStep), Pixmap.Format.RGBA8888);
+            pixmap.setColor(Color.GREEN);
+            pixmap.fill();
+            progressBarStyle.knobBefore = new TextureRegionDrawable(new Texture(pixmap));
+            pixmap.dispose();
+
+            pixmap = new Pixmap(Math.round(widgetUnitStep), Math.round(widgetUnitStep), Pixmap.Format.RGBA8888);
+            pixmap.setColor(Color.RED);
+            pixmap.fill();
+            progressBarStyle.knobAfter = new TextureRegionDrawable(new Texture(pixmap));
+            pixmap.dispose();
+
+            Label.LabelStyle labelStyleVerySmall = new Label.LabelStyle();
+            labelStyleVerySmall.font = getC().styleSingleton.getBitmapFontVerySmall();
+            Label downloadLabel = new Label(
+                    s("Download_in_progress"), labelStyleVerySmall);
+            progressBarTable.add(downloadLabel).padTop(0.3f*borderPad).height(0.7f*borderPad)
+                    .padRight(3.2f*widgetUnitStep + borderPad)
+                    .width(2*widgetUnitStep).right().row();
+            progressBar = new ProgressBar(0f, 1f, 0.01f, false, progressBarStyle);
+            progressBar.setValue(0.f);
+            // progressBar.setAnimateDuration(1.f);
+            // The percentage sits on the bar itself, centred: the small font's white outline keeps
+            // it readable over both the green done part and the red remainder.
+            progressPercentLabel = new Label("0%", labelStyleVerySmall);
+            progressPercentLabel.setAlignment(com.badlogic.gdx.utils.Align.center);
+            com.badlogic.gdx.scenes.scene2d.ui.Stack progressStack = new com.badlogic.gdx.scenes.scene2d.ui.Stack();
+            progressStack.add(progressBar);
+            progressStack.add(progressPercentLabel);
+            // Stops the download, under the bar it belongs to; asked about first, as
+            // what it throws away may be most of an hour's fetching.
+            buttonCancelDownload = getC().widgetTextures.getButtonWithIcon("icons/icon_download_cancel.png");
+            buttonCancelDownload.setName("download_cancel");
+            buttonCancelDownload.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    if (getNativeScreenCaller() == null) {
+                        return;   // the headless renderer: nobody to ask
+                    }
+                    getNativeScreenCaller().promptYesNo("", s("Download_cancel_confirm"), () ->
+                            // The answer comes on the platform's UI thread; stopping closes
+                            // connections and reads the disk.
+                            getC().submitExecutorGeneric(() ->
+                                    com.peaknav.compatibility.PeakNavAppState.getAppState()
+                                            .cancelMapDataDownload()));
+                }
+            });
+            progressBarTable.add(progressStack).padTop(0).padRight(3.2f*widgetUnitStep + borderPad)
+                    .width(2*widgetUnitStep).height(widgetUnitStep).right().row();
+            // Under the bar, in the middle of it: beside it, on a phone held upright, it fell
+            // on the camera button and could not be seen.
+            progressBarTable.add(buttonCancelDownload).width(widgetUnitStep).height(widgetUnitStep)
+                    .padTop(0.2f*widgetUnitStep)
+                    .padRight(3.7f*widgetUnitStep + borderPad).right();
+
+            Button buttonSearch = getC().widgetTextures.getButtonWithIcon("icons/icon_search.png");
+            buttonSearch.setName("search");   // for /widgets, which places the tutorial's markers
+            buttonSearch.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    mapApp.nativeScreenCaller.openScreenSearchLocation(null);
+                    // mapApp.setScreen(new SearchScreen(mapApp.mapViewerScreen));
+                }
+            });
+            table.add(buttonSearch).width(widgetUnitStep).height(widgetUnitStep)
+                    .right()
+                    .padTop(borderPad)
+                    .padRight(borderPad)
+                    .row();
+
+            optionsButton = getC().widgetTextures.getButtonWithIcon("icons/icon_options.png", "icons/icon_options_checked.png");
+            optionsButton.setName("options");   // for /widgets, which places the tutorial's markers
+            optionsButton.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    if (optionsButton.isChecked()) {
+                        mapApp.mapViewerScreen.optionPane.show();
+                    } else {
+                        mapApp.mapViewerScreen.optionPane.hide();
+                    }
+                }
+            });
+            table.add(optionsButton).width(widgetUnitStep).height(widgetUnitStep).expandY()
+                    .right()
+                    .padRight(borderPad)
+                    .row();
+
+            tableCancelGoToDest = new Table();
+            // tableCancelGoToDest.right();
+            buttonCancelGoToDest = getC().widgetTextures.getButtonWithIcon("icons/icon_x.png");
+            buttonCancelGoToDest.setName("go_to_cancel");   // for /widgets, which places the tutorial's markers
+            buttonCancelGoToDest.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    // Clearing the selection also ends an orbit around it.
+                    mapApp.mapViewerScreen.stopOrbit();
+                    mapApp.mapViewerScreen.removeImpact();
+                }
+            });
+            tableCancelGoToDest.add(buttonCancelGoToDest).width(widgetUnitStep)
+                    .height(widgetUnitStep).padRight(0.85f*widgetUnitStep);
+            buttonGoToDest = getC().widgetTextures.getButtonWithIcon("icons/icon_go_to_dest.png");
+            buttonGoToDest.setName("go_to");   // for /widgets, which places the tutorial's markers
+            buttonGoToDest.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    getC().getMapViewerScreen().tableTool.buttonOrientation.setChecked(false);
+                    Vector3 impactLifted = mapApp.mapViewerScreen.impact.cpy();
+                    impactLifted.z += mapApp.mapViewerScreen.LIFT_ELEV;
+                    Vector3 newDir = mapApp.mapViewerScreen.cam.direction.cpy().scl(-1);
+                    // Don't watch too high:
+                    final float Z_LIMIT = 0.2f;
+                    if (newDir.z > Z_LIMIT) {
+                        newDir.z = Z_LIMIT;
+                        float scl = (float) Math.sqrt(
+                                (1-Z_LIMIT*Z_LIMIT)/(newDir.x*newDir.x + newDir.y*newDir.y));
+                        newDir.x *= scl;
+                        newDir.y *= scl;
+                        // newDir.nor();
+                    }
+                    // One combined move that flies to the destination and turns to look at it.
+                    //  - Interpolation.linear: progress is raw time; each phase eases itself in and
+                    //    out (see easeWindow), so both the flight and the turn accelerate from rest
+                    //    and glide to a stop rather than starting or stopping abruptly.
+                    //  - directionStartFraction 0.25: the turn begins a quarter of the way in and
+                    //    runs to the very end, so it is spread over most of the move (gentle).
+                    //  - positionEndFraction 0.6: the camera lands at 60% of the move, so the turn
+                    //    keeps going for a while after arrival.
+                    //  - 2s duration (vs the 1s default): stretches that turn out further, so it
+                    //    rotates slowly rather than whipping around.
+                    mapApp.mapViewerScreen.moveCameraAction.setCameraVectors(
+                            impactLifted,
+                            newDir,
+                            mapApp.mapViewerScreen.cam.up,
+                            false,
+                            Interpolation.linear,
+                            true,
+                            0.25f,
+                            0.6f,
+                            2.0f
+                    );
+
+                    mapApp.mapViewerScreen.removeImpact();
+                }
+            });
+            tableCancelGoToDest.add(buttonGoToDest).width(widgetUnitStep)
+                    .height(widgetUnitStep);
+
+            // The other thing to do with a clicked point: circle it instead of flying to it.
+            // Same strip as "go to", so it appears with the pin and goes away with it.
+            buttonOrbitDest = getC().widgetTextures.getButtonWithIcon("icons/icon_orbit.png");
+            buttonOrbitDest.setName("orbit");   // for /widgets, which places the tutorial's markers
+            buttonOrbitDest.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    // The gyroscope would fight the orbit for the camera, as it does a flight.
+                    getC().getMapViewerScreen().tableTool.buttonOrientation.setChecked(false);
+                    // Start from where the camera already is: the current distance to the
+                    // point becomes the radius, so the view does not jump before it turns.
+                    mapApp.mapViewerScreen.startOrbit(mapApp.mapViewerScreen.impact);
+                    // The pin has served its purpose, exactly as after "go to". The orbit
+                    // holds its own copy of the centre, so clearing the pin does not stop it.
+                    mapApp.mapViewerScreen.removeImpact();
+                }
+            });
+            tableCancelGoToDest.add(buttonOrbitDest).width(widgetUnitStep)
+                    .height(widgetUnitStep).padLeft(0.35f * widgetUnitStep);
+
+            // A second row, set apart from the three above it: this one does not move the
+            // camera at all, it hands the point to something else entirely, so it should not
+            // sit among the buttons that fly and orbit.
+            tableCancelGoToDest.row();
+            buttonOpenCoordinate = getC().widgetTextures
+                    .getButtonWithIcon("icons/icon_open_coordinate.png");
+            buttonOpenCoordinate.setName("open_coordinate");   // for /widgets, which places the tutorial's markers
+            buttonOpenCoordinate.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    Vector3 impact = mapApp.mapViewerScreen.impact;
+                    if (impact == null || getNativeScreenCaller() == null) {
+                        return;
+                    }
+                    // World x is a longitude scaled at the frame's reference latitude - the
+                    // target's - so that is what converts it back.
+                    double latitude = impact.y;
+                    double longitude = com.peaknav.utils.Units.convertLatitsToLonits(
+                            impact.x, (float) getC().L.getTargetLatitude());
+                    getNativeScreenCaller().openCoordinate(latitude, longitude);
+                }
+            });
+            // Also on the second row: a walk to the point along the paths of the map data, opened
+            // as a GPX track (see RouteToPoint). It starts from where the viewer stands.
+            buttonRouteToDest = getC().widgetTextures.getButtonWithIcon("icons/icon_route_to.png");
+            buttonRouteToDest.setName("route_to");   // for /widgets, which places the tutorial's markers
+            buttonRouteToDest.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    Vector3 impact = mapApp.mapViewerScreen.impact;
+                    if (impact == null) {
+                        return;
+                    }
+                    double latitude = impact.y;
+                    double longitude = com.peaknav.utils.Units.convertLatitsToLonits(
+                            impact.x, (float) getC().L.getTargetLatitude());
+                    com.peaknav.routing.RouteToPoint.start(getC().L.getCurrentLatitude(),
+                            getC().L.getCurrentLongitude(), latitude, longitude);
+                    mapApp.mapViewerScreen.removeImpact();
+                }
+            });
+            // And keeping the point: a marker, a flag on the map from now on (MarkerStore).
+            buttonSaveMarker = getC().widgetTextures.getButtonWithIcon("icons/icon_marker_add.png");
+            buttonSaveMarker.setName("save_marker");   // for /widgets, which places the tutorial's markers
+            buttonSaveMarker.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    mapApp.mapViewerScreen.saveImpactAsMarker();
+                }
+            });
+            Table secondRow = new Table();
+            secondRow.add(buttonSaveMarker).width(widgetUnitStep).height(widgetUnitStep)
+                    .padRight(0.35f * widgetUnitStep);
+            secondRow.add(buttonRouteToDest).width(widgetUnitStep).height(widgetUnitStep)
+                    .padRight(0.35f * widgetUnitStep);
+            secondRow.add(buttonOpenCoordinate).width(widgetUnitStep).height(widgetUnitStep);
+            tableCancelGoToDest.add(secondRow).colspan(3).right()
+                    .padTop(0.55f * widgetUnitStep);
+            table.add(tableCancelGoToDest).right().expandY()
+                    .padRight(borderPad)
+                    .row();
+
+            // Cinematic GPX tour. Hidden until a track is loaded (MapViewerScreen toggles it).
+            // A play triangle, not the camera icon: with the camera it was indistinguishable from
+            // the photo button right above it, so nobody read it as "play the loaded route".
+            // The same button pauses the tour once it is running — its icon is swapped by
+            // MapViewerScreen.updateGpxButtons, so play and pause never occupy two slots.
+            buttonGpxFly = getC().widgetTextures.getButtonWithIcon("icons/icon_gpx_play.png", null);
+            buttonGpxFly.setName("gpx_play");   // for /widgets, which places the tutorial's markers
+            buttonGpxFly.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    mapApp.mapViewerScreen.toggleGpxFlythrough();
+                }
+            });
+            buttonGpxFly.setVisible(false);
+            table.add(buttonGpxFly).width(widgetUnitStep).height(widgetUnitStep).expandY()
+                    .right()
+                    .padRight(borderPad)
+                    .row();
+
+            // Clear the loaded track(s). Also hidden until there is something to clear.
+            buttonGpxClear = getC().widgetTextures.getButtonWithIcon(
+                    "icons/icon_gpx_clear.png", null);
+            buttonGpxClear.setName("gpx_clear");
+            buttonGpxClear.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    mapApp.mapViewerScreen.stopGpxFlythrough();
+                    getC().gpxManager.clear();
+                }
+            });
+            buttonGpxClear.setVisible(false);
+            table.add(buttonGpxClear).width(widgetUnitStep).height(widgetUnitStep).expandY()
+                    .right()
+                    .padRight(borderPad)
+                    .row();
+
+            // Save or share the track, when it exists nowhere else on the device. Hidden otherwise.
+            buttonGpxShare = getC().widgetTextures.getButtonWithIcon("icons/icon_gpx_share.png", null);
+            buttonGpxShare.setName("gpx_share");   // for /widgets, which places the tutorial's markers
+            buttonGpxShare.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    String xml = getC().gpxManager.getShareableXml();
+                    if (xml != null && getNativeScreenCaller() != null) {
+                        getNativeScreenCaller().shareGpx(getC().gpxManager.getShareableName(), xml);
+                    }
+                }
+            });
+            buttonGpxShare.setVisible(false);
+            table.add(buttonGpxShare).width(widgetUnitStep).height(widgetUnitStep).expandY()
+                    .right()
+                    .padRight(borderPad)
+                    .row();
+
+            // Over a photo the terrain is not drawn - only its outlines - unless this bar
+            // is raised: it fades the rendered terrain in over the picture, up to opaque.
+            // Vertical, at the right edge just above the share button, and only while a
+            // photo is shown.
+            // Same knob as the outline-visibility bar at the bottom (the round alpha knob),
+            // not the elevation bar's.
+            Slider.SliderStyle terrainStyle = new Slider.SliderStyle();
+            float knob = Math.min(Gdx.graphics.getWidth(), Gdx.graphics.getHeight())
+                    * 0.05f * com.peaknav.utils.Units.getUiScale();   // the short side: see above
+            terrainStyle.knob = getC().widgetTextures.getTextureRegionDrawable("icons/icon_slider_alpha.png");
+            terrainStyle.knob.setMinHeight(knob);
+            terrainStyle.knob.setMinWidth(knob);
+            terrainStyle.background = getC().widgetTextures.getNinePatchDrawable("icons/slider_nine_patch.png");
+            sliderTerrainAlpha = new Slider(0f, 1f, 0.05f, true, terrainStyle);
+            sliderTerrainAlpha.setName("terrain_bar");   // for /widgets, which places the tutorial's markers
+            sliderTerrainAlpha.setVisualPercent(0f);
+            sliderTerrainAlpha.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    MapViewerSingleton.getViewerInstance().labelRenderer
+                            .setTerrainAlpha(sliderTerrainAlpha.getVisualPercent());
+                }
+            });
+            photoColumn = new Table();
+            if (com.peaknav.utils.PeakNavUtils.getLoadFactory() != null
+                    && com.peaknav.utils.PeakNavUtils.getLoadFactory().isDebugBuild()) {
+                // Debug builds: save this photo with the camera's pose as a dataset sample,
+                // just above the terrain-opacity bar.
+                buttonSaveSample = getC().widgetTextures.getButtonWithIcon(
+                        "icons/icon_save_sample.png", null);
+                buttonSaveSample.setName("save_sample");   // for /widgets, which places the tutorial's markers
+                buttonSaveSample.addListener(new ChangeListener() {
+                    @Override
+                    public void changed(ChangeEvent event, Actor actor) {
+                        com.peaknav.viewer.PhotoSkylineAligner.saveSample();
+                    }
+                });
+                photoColumn.add(buttonSaveSample).width(widgetUnitStep).height(widgetUnitStep)
+                        .padBottom(borderPad);
+                photoColumn.row();
+            } else {
+                buttonSaveSample = null;
+            }
+            photoColumn.add(sliderTerrainAlpha).width(widgetUnitStep).height(3 * widgetUnitStep);
+            photoColumn.pack();
+            photoColumn.setVisible(false);
+
+            shareButton = getC().widgetTextures.getButtonWithIcon(
+                    "icons/icon_share.png", null);
+            shareButton.setName("share");   // for /widgets, which places the tutorial's markers
+            shareButton.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    mapApp.mapViewerScreen.takeSnapshot();
+                }
+            });
+            table.add(shareButton).width(widgetUnitStep).height(widgetUnitStep).expandY()
+                    .right()
+                    .padRight(borderPad)
+                    .row();
+
+            Table tableBottomRight = new Table();
+            // Label.LabelStyle labelStyleVerySmall = new Label.LabelStyle();
+            // labelStyleVerySmall.font = getC().styleSingleton.getBitmapFontVerySmall();
+            copyrightLabel = new Label(
+                    P.getUnderlayImageProvider().getCopyrightNotice(), labelStyleVerySmall);
+
+            tableBottomRight.add(copyrightLabel).bottom().padRight(0.5f*widgetUnitStep);
+            if (com.peaknav.utils.PeakNavUtils.getLoadFactory() != null
+                    && com.peaknav.utils.PeakNavUtils.getLoadFactory().isDebugBuild()) {
+                // Debug builds: the welcome screen as a first run shows it - the slideshow, the
+                // pointers at the download button - which is otherwise reachable only by clearing
+                // the app's data. A tap on its background gives the map back.
+                Button buttonWelcome = getC().widgetTextures.getButtonWithIcon("icons/icon_info.png");
+                buttonWelcome.setName("welcome_preview");
+                buttonWelcome.addListener(new ChangeListener() {
+                    @Override
+                    public void changed(ChangeEvent event, Actor actor) {
+                        mapApp.introScreen.showAsPreview();
+                    }
+                });
+                tableBottomRight.add(buttonWelcome).width(widgetUnitStep).height(widgetUnitStep)
+                        .padRight(0.5f * widgetUnitStep);
+            }
+            helpButton = getC().widgetTextures.getButtonWithIcon("icons/icon_help.png");
+            helpButton.setName("help");   // for /widgets, which places the tutorial's markers
+            helpButton.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    // The "?" button is the tutorial only. Keyboard controls are a
+                    // separate overlay, shown when an unbound key is pressed.
+                    // Drawn by the app, not handed to a platform web view: see TutorialOverlay.
+                    mapApp.mapViewerScreen.tutorialOverlay.show();
+                }
+            });
+            tableBottomRight.add(helpButton).width(widgetUnitStep).height(widgetUnitStep).padRight(0.5f*widgetUnitStep);
+            hereButton = getC().widgetTextures.getButtonWithIcon("icons/icon_here.png");
+            hereButton.setName("here");   // for /widgets, which places the tutorial's markers
+            icon_here = getC().widgetTextures
+                    .getTextureRegionDrawable("icons/icon_here.png");
+            icon_here_gps = getC().widgetTextures
+                    .getTextureRegionDrawable("icons/icon_here_gps.png");
+            hereButton.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    // A request that waits for the permission's answer. Asking for the
+                    // position straight after asking for the permission found none yet,
+                    // returned, and left nothing to answer once it was granted: the press
+                    // that brought the prompt up did nothing, and had to be made again.
+                    mapApp.nativeScreenCaller.requestCurrentLocation(
+                            (longitude, latitude) -> getC().L.setCurrentTargetCoordsFromGPS(latitude, longitude));
+                }
+            });
+            tableBottomRight.add(hereButton).width(widgetUnitStep)
+                            .height(widgetUnitStep).right();
+            table.add(tableBottomRight)
+                    .right()
+                    .padBottom(borderPad)
+                    .padRight(borderPad)
+                    .row();
+        }
+
+        /**
+         * Shows the terrain-opacity bar (and, in debug builds, the save button above it)
+         * with a photo and hides them, the bar back at zero, without.
+         */
+        public void setPhotoShown(boolean shown) {
+            if (!shown) {
+                sliderTerrainAlpha.setValue(0f);
+                MapViewerSingleton.getViewerInstance().labelRenderer.setTerrainAlpha(0f);
+            }
+            photoColumn.setVisible(shown);
+            if (shown) {
+                placePhotoColumn();
+            }
+        }
+
+        private final com.badlogic.gdx.math.Vector2 photoColumnAnchor = new com.badlogic.gdx.math.Vector2();
+
+        /** Puts the photo-only group on the share button's column, one pad above its top. */
+        /**
+         * The top of the photo's column over the share button (the terrain-opacity bar, and in
+         * debug builds the save-sample button above it), in stage coordinates; NaN while hidden.
+         */
+        public float photoColumnTop() {
+            if (photoColumn == null || !photoColumn.isVisible()) {
+                return Float.NaN;
+            }
+            return photoColumn.getY() + photoColumn.getHeight();
+        }
+
+        public void placePhotoColumn() {
+            if (shareButton == null) {
+                return;
+            }
+            photoColumnAnchor.set(0, shareButton.getHeight());
+            shareButton.localToStageCoordinates(photoColumnAnchor);
+            float x = photoColumnAnchor.x + (shareButton.getWidth() - photoColumn.getWidth()) / 2;
+            float y = photoColumnAnchor.y + borderPad;
+            if (photoColumn.getX() != x || photoColumn.getY() != y) {
+                photoColumn.setPosition(x, y);
+            }
+        }
+    }
+
+    public TableLocation getTableLocation() {
+        tableLocation = new TableLocation();
+        return tableLocation;
+    }
+}

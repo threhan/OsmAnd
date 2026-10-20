@@ -1,0 +1,246 @@
+package com.peaknav.viewer.pois;
+
+import static com.peaknav.utils.PeakNavUtils.getC;
+import static com.peaknav.viewer.labels.PoiObject.getComparatorPeaks;
+import static com.peaknav.viewer.labels.PoiObject.getComparatorPois;
+
+import com.badlogic.gdx.Gdx;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.ConcurrentModificationException;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
+
+import com.peaknav.utils.StoppableRunnable;
+import com.peaknav.viewer.DataRetrieveThreadManager;
+import com.peaknav.viewer.labels.DrawLabel;
+import com.peaknav.viewer.controller.MapController;
+import com.peaknav.viewer.labels.DrawLabelCategory;
+import com.peaknav.viewer.labels.LabelOverlapIndex;
+import com.peaknav.viewer.labels.PoiObject;
+import com.peaknav.viewer.screens.MapViewerScreen;
+
+public class RunnableUpdateVisibility extends StoppableRunnable {
+
+    private static final String TAG = "RunnableUpdateVisibility";
+    private static long lastUpdate = 0L;
+    private final MapController C;
+    private final Set<DataRetrieveThreadManager.MapDataUpdateRequest> updateRequests;
+
+
+    private final static LabelOverlapIndex overlapIndexFront = new LabelOverlapIndex();
+    private final static LabelOverlapIndex overlapIndexBack = new LabelOverlapIndex();
+    private final static List<PoiObject> newDisplayablePois = new ArrayList<>(2048);
+
+    private final static List<PoiObject> newVisiblePeaks = new ArrayList<>(8*2048);
+    private final static List<PoiObject> newVisiblePois = new ArrayList<>(8*2048);
+
+    @Override
+    protected boolean checkStop() {
+        return super.checkStop();
+    }
+
+    public RunnableUpdateVisibility(
+            MapController mapController,
+            Set<DataRetrieveThreadManager.MapDataUpdateRequest> updateRequests
+    ) {
+        this(mapController, updateRequests, 0L);
+    }
+
+    /** The request's sequence number, published on completion; 0 for untracked passes. */
+    private final long sequence;
+
+    public RunnableUpdateVisibility(
+            MapController mapController,
+            Set<DataRetrieveThreadManager.MapDataUpdateRequest> updateRequests,
+            long sequence
+    ) {
+        C = mapController;
+        this.updateRequests = updateRequests;
+        this.sequence = sequence;
+    }
+
+    @Override
+    public void run() {
+        com.peaknav.utils.ResourceStats.labelVisibilityRuns.incrementAndGet();
+        clearEverything();
+
+        try {
+            mainRun();
+            com.peaknav.utils.ResourceStats.labelVisibilityCompleted.incrementAndGet();
+            // Not accumulateAndGet(sequence, Math::max): that takes a LongBinaryOperator,
+            // which RoboVM's runtime does not have. This CAS loop is the same monotonic max.
+            AtomicLong completed = com.peaknav.utils.ResourceStats.labelVisibilityCompletedSequence;
+            long prev = completed.get();
+            while (sequence > prev && !completed.compareAndSet(prev, sequence)) {
+                prev = completed.get();
+            }
+        } finally {
+            clearEverything();
+        }
+    }
+
+    private void clearEverything() {
+        resetOverlapIndexes();
+        newDisplayablePois.clear();
+        newVisiblePois.clear();
+        newVisiblePeaks.clear();
+    }
+
+    private void mainRun() {
+        if (C.L.isCurrentLocationNotSet()) {
+            return;
+        }
+
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastUpdate < 250) {
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        lastUpdate = currentTime;
+
+        getC().visibility.updateCameraPosLatits();
+
+        while (true) {
+            // One request at a time, taken under the set's own lock. The set is a synchronized
+            // one, which does not guard iteration: the render thread adding a request between
+            // next() and remove() made remove() throw, and the pass ended there with its
+            // worker thread.
+            DataRetrieveThreadManager.MapDataUpdateRequest updateRequest;
+            synchronized (updateRequests) {
+                Iterator<DataRetrieveThreadManager.MapDataUpdateRequest> iterator = updateRequests.iterator();
+                if (!iterator.hasNext()) {
+                    break;
+                }
+                updateRequest = iterator.next();
+                iterator.remove();
+            }
+
+            switch (updateRequest) {
+                case DATA_SORT_POI_LIST_BY_RELEVANCE:
+                    try {
+                        Thread.sleep(250);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                    // Sorting by desired display order:
+                    sortListsOfPOIs();
+                case DATA_VISIBILITY_RECOMPUTE_HIDDEN_BY_MOUNTAINS:
+                    try {
+                        Thread.sleep(150);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                    // now filter POIs to get the list of newVisiblePeaks and newVisiblePois
+                    updateVisiblePOIs();
+                case DATA_VISIBILITY_RECOMPUTE_LABEL_OVERLAP:
+                    updateDisplayablePOIs();
+                case DATA_VISIBILITY_RECOMPUTE_FRONT_TO_CAMERA:
+                    updateFrontOfCameraPOIs();
+            }
+        }
+    }
+
+    private void resetOverlapIndexes() {
+        int width = Gdx.graphics.getWidth();
+        int height = Gdx.graphics.getHeight();
+        overlapIndexFront.reset(width, height);
+        overlapIndexBack.reset(width, height);
+    }
+
+    private void sortListsOfPOIs() {
+        double lat = C.L.getCurrentLatitude();
+        double lon = C.L.getCurrentLongitude();
+        double ele = C.L.getCurrentTerrainEle();
+
+        C.O.applyToAllListsOfPOIs((listOfPeaks, listOfNonPeaks) -> {
+
+            Collections.sort(listOfPeaks,
+                    getComparatorPeaks(lat, lon, ele));
+            Collections.sort(listOfNonPeaks,
+                    getComparatorPois(lat, lon, ele));
+
+        });
+    }
+
+    private void updateDisplayablePOIs() {
+
+        resetOverlapIndexes();
+        newDisplayablePois.clear();
+
+        C.O.iterateOverVisiblePoisUnstoppable(poiObject -> {
+            poiObject.drawLabel.updatePosition();
+            poiObject.drawLabel.updateGlyphData(overlapIndexFront, overlapIndexBack);
+            if (poiObject.drawLabel.isVisibleIgnoreCameraOrientation())
+                newDisplayablePois.add(poiObject);
+        });
+
+        C.O.setDisplayablePoiList(newDisplayablePois);
+    }
+
+    private void updateFrontOfCameraPOIs() {
+        newDisplayablePois.clear();
+        C.O.iterateOverVisiblePoisUnstoppable(poiObject -> {
+            if (!poiObject.drawLabel.isVisibleIgnoreCameraOrientation()) {
+                return;
+            }
+            poiObject.drawLabel.updateHiddenBehindCamera();
+            if (poiObject.drawLabel.isVisible())
+                newDisplayablePois.add(poiObject);
+        });
+
+        C.O.setDisplayablePoiList(newDisplayablePois);
+    }
+
+    private void updateVisiblePOIs() {
+
+        MapViewerScreen mapViewerScreen = getC().getMapViewerScreen();
+        mapViewerScreen.impactPixmap.requestUpdatedImpactPixmap();
+        // The camera's position noted again, now that the picture has been taken: one run
+        // serves every request that comes in while it is going, and the note of one begun
+        // before a move to a distant place was still the old place's (see
+        // Visibility.checkVisible, which no longer depends on it once there is a picture).
+        getC().visibility.updateCameraPosLatits();
+
+        newVisiblePeaks.clear();
+        newVisiblePois.clear();
+
+        C.O.iterateOverAllLists(poiObject -> {
+            // A place whose height is not known yet has no position to label.
+            if (!poiObject.resolveElevation())
+                return;
+            DrawLabel drawLabel = poiObject.drawLabel;
+
+            drawLabel.lock.lock();
+            try {
+                drawLabel.updatePosition();
+                drawLabel.resetVisibility();
+                drawLabel.updateHiddenByMountains();
+            } finally {
+
+                drawLabel.lock.unlock();
+            }
+
+            if (drawLabel.isVisibleByMountains()) {
+                if (drawLabel.drawLabelCategory == DrawLabelCategory.PEAK)
+                    newVisiblePeaks.add(poiObject);
+                else
+                    newVisiblePois.add(poiObject);
+            }
+        });
+
+        // Collections.sort(newVisiblePeaks, getComparatorPeaks(getC().L.getTargetLatitude(), getC().L.getTargetLongitude(), getC().L.getCurrentTerrainEle()));
+        // Collections.sort(newVisiblePois, getComparatorPois(getC().L.getTargetLatitude(), getC().L.getTargetLongitude(), getC().L.getCurrentTerrainEle()));
+
+        newVisiblePeaks.addAll(newVisiblePois);
+        C.O.setVisiblePoiList(newVisiblePeaks);
+    }
+
+}

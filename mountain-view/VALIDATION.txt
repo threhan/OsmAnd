@@ -1,0 +1,42 @@
+Mountain View integration validation - 2026-10-14
+
+Base OsmAnd commit: d2dfeae0aba603a221f229fadbca389036807129
+PeakNav source: 77383cbf553e02600faedcba75416c621479b342
+Build: Android Full / OpenGL / ARM64 / debug, JDK 17, SDK 36.
+
+Passed:
+- :mountain-view:testDebugUnitTest: 7 tests, no failures.
+  Storage containment, invalid roots, coordinates including 0,0, invalid coordinates,
+  isolated PBF runtime coexisting with the actual host Protobuf, Unicode PBF names.
+- :OsmAnd:assembleAndroidFullOpenglArm64Debug.
+- Standalone parsing of 80 real downloaded PBF files with both runtimes present:
+  134,928 nodes and 21,470 ways.
+- Install/update on the attached Huawei ALN-AL00, Android API 31.
+- Chinese Mountain view entry in the main drawer and selected-position action panel.
+- Selected 39.95 N, 115.05 E arrives unchanged in the viewer.
+- Actual terrain and Chinese peak labels near Xiaowutai render on the phone GPU.
+- Back returns to OsmAnd; host PID stays unchanged and terrain process exits.
+- Re-entry creates a fresh terrain process; no fatal runtime errors in its log.
+  Final re-entry screenshot was interrupted by switching to another application.
+
+Issue found and fixed during device testing:
+Upstream osmpbf 1.6.1 called modern Protobuf methods absent from OsmAnd's patched
+legacy implementation. isolateMountainPbf now relocates osmpbf and its matching
+Protobuf runtime together; host Protobuf is unchanged. Regression tests cover this.
+
+Limits of validation:
+No active on-trail navigation session, camera alignment accuracy, or background
+terrain download completion was tested. Real cached terrain was used, but phone
+network connectivity was not disabled for this test. Global offline GeoNames search
+is not bundled; its missing-index fallback is logged and regional peak labels work.
+
+APK SHA-256: 93adb7612cce910b26eb84ef141751b13e95dc0a1c1f57eda8f5c762742d6de1
+
+2026-10-15 menu follow-up:
+The context entry had inherited drawer order 19, displacing the fourth standard
+Action/overflow button. Use context order 50 and retain drawer order 19.
+APK build and update passed. On-device selected-point first row now shows Add,
+Marker, Share and Actions. Expanding Actions exposes Mountain view, Weather forecast
+comparison and Point weather alerts. Tapping comparison opens its loading screen.
+This verifies menu reachability, not successful retrieval of fresh weather data.
+Menu-fix APK SHA-256: 314f0d22f275736092320a6d99a421c35ca683cc3e570003e552ad2f30588689

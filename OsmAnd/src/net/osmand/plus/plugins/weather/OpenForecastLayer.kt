@@ -48,7 +48,7 @@ class OpenForecastLayer(context: Context) : OsmandMapLayer(context) {
         }
         val longitudes = corners.map { center.longitude + wrap(it.longitude - center.longitude) }
         val span = max(longitudes.max() - longitudes.min(), corners.maxOf { it.latitude } - corners.minOf { it.latitude })
-        val base = if (p.weatherSource == WeatherSource.ICON) .125 else .15
+        val base = when (p.weatherSource) { WeatherSource.IFS -> .09; WeatherSource.ICON -> .125; else -> .15 }
         val step = base * 2.0.pow(ceil(log2(max(1.0, span / (base * 4)))))
         val west = floor(longitudes.min() / step) * step
         val south = floor(corners.minOf { it.latitude } / step) * step

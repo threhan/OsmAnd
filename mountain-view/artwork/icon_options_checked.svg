@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Options button, active state: green badge. -->
+<svg width="240" height="240" viewBox="0 0 240 240" version="1.1" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="120" cy="120" r="120" fill="#43b02a"/>
+  <g stroke="#ffffff" stroke-width="20" stroke-linecap="round">
+    <line x1="64" y1="86" x2="176" y2="86"/>
+    <line x1="64" y1="120" x2="176" y2="120"/>
+    <line x1="64" y1="154" x2="176" y2="154"/>
+  </g>
+  <circle cx="120" cy="120" r="118.5" fill="none" stroke="#237a12" stroke-width="4"/>
+</svg>

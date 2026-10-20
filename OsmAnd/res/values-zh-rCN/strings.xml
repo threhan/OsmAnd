@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="forecast_switch_source">天气源：%1$s  ▾</string>
+    <string name="open_weather_ifs">IFS HRES</string>
+    <string name="open_weather_ifs_description">ECMWF IFS HRES：9 公里全球预报，由 Open-Meteo 提供。定点预报最多 15 天；地图为在线采样图层。</string>
+    <string name="forecast_model_days">最多 %1$d 天</string>
+    <string name="mountain_view_name">观山</string>
+    <string name="mountain_view_description">查看三维山体和山峰名称，下载地形后可离线使用。</string>
+
     <string name="weather_cached_sample_time">离线预报时次：%1$s</string>
     <string name="forecast_chart_interval_hour">1 小时</string>
     <string name="forecast_chart_interval_three">3 小时</string>
@@ -22,12 +29,12 @@
     <string name="forecast_chart_pin">置顶</string>
     <string name="forecast_chart_unpin">取消置顶</string>
     <string name="forecast_chart_detail">气温 %1$s °C\n降水 %2$s mm\n降雪 %3$s cm\n风速 %4$s m/s · 最大阵风 %5$s m/s\n气压 %6$s hPa</string>
-    <string name="forecast_chart_note">显示设备时区内含今天的七个自然日。1 小时／3 小时列显示截至该时刻的降水、降雪累计量和最大阵风；天视图显示最高／最低气温、全天降水／降雪、平均风速和最大阵风。缺少小时数据时显示未知。天视图中的云量和气压取日平均。箭头表示风吹向的方向。</string>
+    <string name="forecast_chart_note">显示设备时区内含今天的最多 16 个自然日。各模型覆盖时长不同，超出范围显示无数据。1 小时／3 小时列显示截至该时刻的降水、降雪累计量和最大阵风；天视图显示最高／最低气温、全天降水／降雪、平均风速和最大阵风。缺少小时数据时显示未知。天视图中的云量和气压取日平均。箭头表示风吹向的方向。</string>
     <string name="forecast_daily_snow_yes">预计有雪 · 降雪 %1$s cm</string>
     <string name="forecast_daily_snow_no">预计无雪</string>
     <string name="forecast_daily_snow_unknown">降雪未知</string>
     <string name="forecast_daily_trace_snow">&lt;0.1</string>
-    <string name="forecast_daily_title">未来七日预报</string>
+    <string name="forecast_daily_title">未来逐日预报</string>
     <string name="forecast_daily_refresh">刷新</string>
     <string name="forecast_daily_error">暂时无法刷新，请联网后重试。下方若有缓存预报，其内容尚未更新。</string>
     <string name="forecast_daily_unknown">未知</string>
@@ -39,11 +46,11 @@
     <string name="forecast_daily_rain">%1$s · 总降水 %2$s mm</string>
     <string name="forecast_daily_wind_value">%1$d 级（%2$s m/s）</string>
     <string name="forecast_daily_wind">最大阵风 %1$s m/s\n平均风力 %2$s</string>
-    <string name="forecast_daily_note">由 Open-Meteo 提供，限个人非商业使用；查询会向服务商发送该地点坐标。按地点时区展示从今天起七天的数据。平均风力由全天平均 10 米风速换算为蒲福风级，阵风取当天最大值。有雨包含阵雨，总降水也包含雪的水当量；降雪量以厘米计，并非地面积雪深度。同一天有雨、有雪不一定是雨夹雪；未知表示数据缺失。此定点预报缓存与下载的地图天气包独立。</string>
+    <string name="forecast_daily_note">由 Open-Meteo 提供，限个人非商业使用；查询会向服务商发送该地点坐标。按地点时区展示从今天起该模型支持的预报，最多 16 天。平均风力由全天平均 10 米风速换算为蒲福风级，阵风取当天最大值。有雨包含阵雨，总降水也包含雪的水当量；降雪量以厘米计，并非地面积雪深度。同一天有雨、有雪不一定是雨夹雪；未知表示数据缺失。此定点预报缓存与下载的地图天气包独立。</string>
     <string name="forecast_compare_title">天气预报对比</string>
     <string name="forecast_compare_retry">重试</string>
     <string name="forecast_compare_note">GFS / ECMWF IFS 0.25° / ICON / GEM · 由 Open-Meteo 提供。联网查询会发送地点坐标，个人非商业免费。预报批次可能与已下载的天气地图不同。</string>
-    <string name="forecast_compare_legend">左右滑动查看未来 7 天逐小时预报，时间采用手机时区。— 表示暂无数据；颜色表示四模型数值的相对高低。逐小时数据可能由较粗时间间隔插值生成。下列时间为获取时间，并非模型起报时间。</string>
+    <string name="forecast_compare_legend">左右滑动查看最多 16 天逐小时预报，时间采用手机时区。— 表示暂无数据；颜色表示四模型数值的相对高低。逐小时数据可能由较粗时间间隔插值生成。下列时间为获取时间，并非模型起报时间。</string>
     <string-array name="forecast_compare_metrics">
         <item>温度 °C</item><item>降水 mm/h</item><item>风速 m/s</item><item>云量 %</item><item>气压 hPa</item>
     </string-array>

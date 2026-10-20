@@ -1,0 +1,15 @@
+package com.peaknav.viewer.render_tiles;
+
+public enum PixmapLayerName {
+    // NOTE: order corresponds to drawing priority
+    // (last elements will appear on top of the previous ones)
+    UNDERLAY_LAYER,
+    BASE_ROADS,
+    SKI_SLOPES,
+    NAVIGATION_LAYER,
+    GPX_PATH,
+    /** The roads' aux texture: trail dash phase and difficulties (see RoadTileRasterizer). */
+    ROADS_AUX,
+    /** The ski lifts, drawn with the ski slopes (see LiftRasterizer). */
+    SKI_LIFTS,
+}

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="240" height="240" viewBox="0 0 240 240" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="disc"><circle cx="120" cy="120" r="120"/></clipPath>
+  </defs>
+
+  <circle cx="120" cy="120" r="120" fill="#ffffff"/>
+  <g clip-path="url(#disc)">
+    <rect x="0" y="0" width="240" height="240" fill="#eef4e6"/>
+
+    <!-- folded three-panel map: two land tones + fold creases -->
+    <g stroke="#3f5230" stroke-width="3" stroke-linejoin="round">
+      <path d="M40 62 L96 44 L152 62 L200 44 L200 178 L152 196 L96 178 L40 196 Z" fill="#cfe3ad"/>
+      <!-- fold shading on alternate panels -->
+      <path d="M96 44 L96 178 L40 196 L40 62 Z" fill="#bcd79a"/>
+      <path d="M152 62 L152 196 L200 178 L200 44 Z" fill="#bcd79a"/>
+    </g>
+    <!-- fold crease lines -->
+    <g stroke="#5a7040" stroke-width="2" opacity="0.6">
+      <path d="M96 44 L96 178" fill="none"/>
+      <path d="M152 62 L152 196" fill="none"/>
+    </g>
+
+    <!-- a road winding across -->
+    <path d="M52 172 C 96 150, 92 96, 132 84 C 168 74, 176 118, 196 108"
+          fill="none" stroke="#f2b134" stroke-width="7" stroke-linecap="round"/>
+    <path d="M52 172 C 96 150, 92 96, 132 84 C 168 74, 176 118, 196 108"
+          fill="none" stroke="#ffffff" stroke-width="2" stroke-dasharray="4 8"/>
+
+    <!-- a little river -->
+    <path d="M70 52 C 84 92, 62 120, 84 168" fill="none" stroke="#5aa8d8" stroke-width="6" stroke-linecap="round"/>
+
+    <!-- destination pin -->
+    <path d="M150 150 c0 -18 -26 -18 -26 0 c0 13 13 24 13 24 c0 0 13 -11 13 -24 z"
+          fill="#d23b32" stroke="#7a1c17" stroke-width="3"/>
+    <circle cx="137" cy="150" r="6" fill="#ffffff"/>
+  </g>
+  <circle cx="120" cy="120" r="118.5" fill="none" stroke="#2f3f24" stroke-width="3"/>
+</svg>

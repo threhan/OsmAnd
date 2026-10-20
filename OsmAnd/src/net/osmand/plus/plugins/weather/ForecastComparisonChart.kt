@@ -18,7 +18,8 @@ class ForecastComparisonChart(context: Context, private val start: Long,
         set(value) { field = value; invalidate() }
     var dailyForecast: DailyForecast? = null
         set(value) {field=value;invalidate()}
-    val days = 7
+    var days = 16
+        set(value) { require(value in 1..16); field = value; timelineInterval = 0; invalidate() }
     var intervalHours = 3
         set(value) { field = value; invalidate() }
     var clouds = false
@@ -33,7 +34,7 @@ class ForecastComparisonChart(context: Context, private val start: Long,
     private var timelineInterval = 0
     private var cachedTimes = emptyList<Long>()
     private val times: List<Long> get() {
-        if (timelineInterval != intervalHours) { cachedTimes = ForecastComparisonValues.timeline(start, intervalHours); timelineInterval = intervalHours }
+        if (timelineInterval != intervalHours) { cachedTimes = ForecastComparisonValues.timeline(start, intervalHours, days); timelineInterval = intervalHours }
         return cachedTimes
     }
     private fun time(i: Int) = times[i]
@@ -239,14 +240,14 @@ class ForecastComparisonChart(context: Context, private val start: Long,
 
 object ForecastComparisonValues {
     private const val HOUR = 3600000L
-    @JvmStatic fun timeline(start: Long, interval: Int): List<Long> {
-        require(interval in listOf(1,3,24))
+    @JvmStatic @JvmOverloads fun timeline(start: Long, interval: Int, days: Int = 7): List<Long> {
+        require(interval in listOf(1,3,24) && days in 1..16)
         val calendar = java.util.Calendar.getInstance().apply {
             timeInMillis=start; set(java.util.Calendar.HOUR_OF_DAY,0); set(java.util.Calendar.MINUTE,0)
             set(java.util.Calendar.SECOND,0); set(java.util.Calendar.MILLISECOND,0)
         }
-        val end = (calendar.clone() as java.util.Calendar).apply { add(java.util.Calendar.DAY_OF_MONTH,7) }.timeInMillis
-        if(interval == 24) return (0..6).map { val t=calendar.timeInMillis; calendar.add(java.util.Calendar.DAY_OF_MONTH,1); t }
+        val end = (calendar.clone() as java.util.Calendar).apply { add(java.util.Calendar.DAY_OF_MONTH,days) }.timeInMillis
+        if(interval == 24) return (0 until days).map { val t=calendar.timeInMillis; calendar.add(java.util.Calendar.DAY_OF_MONTH,1); t }
         return generateSequence(start / (interval*HOUR) * (interval*HOUR)) { it+interval*HOUR }.takeWhile { it<end }.toList()
     }
     private fun samples(f: OpenForecastData.Forecast?, name: String, t: Long, interval: Int): List<Double>? {

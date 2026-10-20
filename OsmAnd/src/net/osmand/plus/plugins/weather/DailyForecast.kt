@@ -19,11 +19,12 @@ data class DailyForecast(val timezone: String, val days: List<Day>, val fetched:
         }
     }
 
-    fun upcoming(now: Long): List<Day> {
+    @JvmOverloads fun upcoming(now: Long, count: Int = days.size): List<Day> {
+        require(count in 1..16)
         val zone = TimeZone.getTimeZone(timezone)
         val format = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = zone }
         val calendar = Calendar.getInstance(zone).apply { timeInMillis = now }
-        return (0 until 7).map {
+        return (0 until count).map {
             val date = format.format(calendar.time)
             calendar.add(Calendar.DAY_OF_MONTH, 1)
             days.firstOrNull { it.date == date } ?: Day(date, null, null, null, null, null, null, null)
@@ -45,7 +46,7 @@ data class DailyForecast(val timezone: String, val days: List<Day>, val fetched:
             check(timezone in TimeZone.getAvailableIDs())
             val daily = json.getJSONObject("daily")
             val dates = daily.getJSONArray("time")
-            check(dates.length() == 7)
+            check(dates.length() in 1..16)
             val units = json.getJSONObject("daily_units")
             val hasSnowfall = daily.has("snowfall_sum")
             val expected = listOf("°C", "°C", "mm", "mm", "mm", "m/s", "m/s", "cm")

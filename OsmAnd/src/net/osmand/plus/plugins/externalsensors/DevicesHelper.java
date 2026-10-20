@@ -698,30 +698,36 @@ public abstract class DevicesHelper implements DeviceListener, DevicePreferences
 				|| !AndroidUtils.hasBLEPermission(activity)) {
 			return false;
 		}
-		boolean bluetoothEnabled = true;
-		if (activity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
-			if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
-				bluetoothEnabled = false;
-				MapActivity mapActivity = getMapActivity();
-				if (mapActivity != null) {
-					try {
-						Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-						mapActivity.startActivityForResult(intent, ENABLE_BLUETOOTH_REQUEST_CODE);
-						mapActivity.registerActivityResultListener(new ActivityResultListener(ENABLE_BLUETOOTH_REQUEST_CODE, (resultCode, resultData) -> {
-							if (resultCode != Activity.RESULT_OK) {
-								app.showShortToastMessage(R.string.no_bt_permission);
-							}
-						}));
-					} catch (ActivityNotFoundException e) {
-						app.showToastMessage(R.string.no_activity_for_intent);
+		try {
+			boolean bluetoothEnabled = true;
+			if (activity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+				if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
+					bluetoothEnabled = false;
+					MapActivity mapActivity = getMapActivity();
+					if (mapActivity != null) {
+						try {
+							Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+							mapActivity.startActivityForResult(intent, ENABLE_BLUETOOTH_REQUEST_CODE);
+							mapActivity.registerActivityResultListener(new ActivityResultListener(ENABLE_BLUETOOTH_REQUEST_CODE, (resultCode, resultData) -> {
+								if (resultCode != Activity.RESULT_OK) {
+									app.showShortToastMessage(R.string.no_bt_permission);
+								}
+							}));
+						} catch (ActivityNotFoundException e) {
+							app.showToastMessage(R.string.no_activity_for_intent);
+						}
 					}
 				}
+			} else {
+				bluetoothEnabled = false;
 			}
-		} else {
-			bluetoothEnabled = false;
-//			app.showToastMessage("Bluetooth LE isnt supported on this device");
+			return bluetoothEnabled;
+		} catch (SecurityException e) {
+			// Permission can be revoked after the check or denied by the system activity.
+			LOG.warn("Bluetooth enable request denied", e);
+			app.showShortToastMessage(R.string.no_bt_permission);
+			return false;
 		}
-		return bluetoothEnabled;
 	}
 
 	private MapActivity getMapActivity() {

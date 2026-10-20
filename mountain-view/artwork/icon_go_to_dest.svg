@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- "Go to destination": a navigation arrow heading toward a destination pin. -->
+<svg width="240" height="240" viewBox="0 0 240 240" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="disc"><circle cx="120" cy="120" r="120"/></clipPath>
+    <linearGradient id="nav" x1="0" y1="60" x2="0" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5aa0e0"/>
+      <stop offset="1" stop-color="#2f6fb0"/>
+    </linearGradient>
+  </defs>
+  <circle cx="120" cy="120" r="120" fill="#ffffff"/>
+  <g clip-path="url(#disc)">
+    <!-- destination pin (top-right) -->
+    <path d="M182 96 c0 -20 -30 -20 -30 0 c0 15 15 27 15 27 c0 0 15 -12 15 -27 z"
+          fill="#d23b32" stroke="#7a1c17" stroke-width="3"/>
+    <circle cx="167" cy="96" r="7" fill="#ffffff"/>
+
+    <!-- navigation arrow -->
+    <path d="M70 176 L124 58 L150 150 L118 132 L86 168 Z"
+          fill="url(#nav)" stroke="#1f4d7d" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M124 58 L118 132 L150 150 Z" fill="#1f4d7d" opacity="0.35"/>
+  </g>
+  <circle cx="120" cy="120" r="118.5" fill="none" stroke="#10202b" stroke-width="3"/>
+</svg>

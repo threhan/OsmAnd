@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="240" height="240" viewBox="0 0 240 240" version="1.1"
+     xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <clipPath id="disc"><circle cx="120" cy="120" r="120"/></clipPath>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#eaf7ff"/>
+      <stop offset="1" stop-color="#dff0e6"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="120" cy="120" r="120" fill="#ffffff"/>
+  <g clip-path="url(#disc)">
+    <rect x="0" y="0" width="240" height="240" fill="url(#sky)"/>
+    <rect x="0" y="182" width="240" height="58" fill="#6bb04a"/>
+
+    <!-- helper to draw a little house: wall + roof + door/window -->
+    <!-- back house (left, small) -->
+    <g stroke="#5a3a22" stroke-width="3" stroke-linejoin="round">
+      <rect x="30" y="128" width="52" height="54" fill="#f2e4c8"/>
+      <path d="M24 128 L56 100 L88 128 Z" fill="#c9553f"/>
+      <rect x="48" y="150" width="16" height="32" fill="#8a5a34"/>
+    </g>
+    <!-- right house (medium) -->
+    <g stroke="#5a3a22" stroke-width="3" stroke-linejoin="round">
+      <rect x="150" y="120" width="60" height="62" fill="#f6efe0"/>
+      <path d="M143 120 L180 88 L217 120 Z" fill="#d98a3a"/>
+      <rect x="160" y="140" width="18" height="18" fill="#7fc0e0"/>
+      <rect x="182" y="140" width="18" height="18" fill="#7fc0e0"/>
+      <rect x="171" y="164" width="18" height="18" fill="#8a5a34"/>
+    </g>
+    <!-- front house (centre, tallest) with a small tower -->
+    <g stroke="#5a3a22" stroke-width="3" stroke-linejoin="round">
+      <rect x="86" y="104" width="66" height="78" fill="#ffffff"/>
+      <path d="M79 104 L119 70 L159 104 Z" fill="#c9553f"/>
+      <rect x="97" y="124" width="18" height="18" fill="#7fc0e0"/>
+      <rect x="123" y="124" width="18" height="18" fill="#7fc0e0"/>
+      <rect x="106" y="150" width="26" height="32" fill="#8a5a34"/>
+    </g>
+  </g>
+  <circle cx="120" cy="120" r="118.5" fill="none" stroke="#2b3a20" stroke-width="3"/>
+</svg>

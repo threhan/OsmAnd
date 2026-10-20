@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Map location pin (marker placed on the map). Transparent background, point at bottom centre. -->
+<svg width="128" height="256" viewBox="0 0 128 256" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pin" x1="0" y1="12" x2="0" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f26a60"/>
+      <stop offset="1" stop-color="#c3271e"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ground shadow -->
+  <ellipse cx="64" cy="238" rx="26" ry="8" fill="#000000" opacity="0.22"/>
+
+  <!-- teardrop -->
+  <path d="M64 236
+           C 40 190, 12 150, 12 96
+           a52 52 0 0 1 104 0
+           C 116 150, 88 190, 64 236 Z"
+        fill="url(#pin)" stroke="#7a1712" stroke-width="5" stroke-linejoin="round"/>
+  <!-- hole -->
+  <circle cx="64" cy="94" r="24" fill="#ffffff" stroke="#7a1712" stroke-width="4"/>
+  <circle cx="64" cy="94" r="12" fill="#c3271e"/>
+  <!-- highlight -->
+  <path d="M40 66 a34 34 0 0 1 20 -20" fill="none" stroke="#ffffff" stroke-width="6"
+        stroke-linecap="round" opacity="0.55"/>
+</svg>

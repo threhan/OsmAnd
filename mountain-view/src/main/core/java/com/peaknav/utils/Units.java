@@ -1,0 +1,247 @@
+package com.peaknav.utils;
+
+import static com.peaknav.utils.PreferencesManager.P;
+
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.math.Vector3;
+import com.peaknav.viewer.tiles.TileId;
+
+import com.peaknav.geo.LatLong;
+import com.peaknav.geo.LatLongUtils;
+
+public class Units {
+    public final static double radiusOfEarth = 6371000.f; // meters
+    public final static float radiusOfEarthInLatits = convertMetersToLatits(radiusOfEarth); // latits
+    public static final int cLondexShift = 3600;
+    public static final int cLatdexShift = 1800;
+    public final static int SUB = 20;
+    public final static float COORD_STEP = 1.f/ SUB;
+    private static final int cLondexFactor = 10000;
+    // private final float corrX0, corrX1, corrY0, corrY1;
+    public static final float deg2rad = 0.017453292519943295f;
+
+    public static TileId getTileNumber(final double lat, final double lon, final int zoom) {
+        int xtile = (int)Math.floor( (lon + 180) / 360 * (1<<zoom) ) ;
+        int ytile = (int)Math.floor( (1 - Math.log(Math.tan(Math.toRadians(lat)) + 1 / Math.cos(Math.toRadians(lat))) / Math.PI) / 2 * (1<<zoom) ) ;
+        xtile = correctTileX(xtile, zoom);
+        ytile = correctTileY(ytile, zoom);
+        return new TileId(zoom, xtile, ytile);
+    }
+
+    public static int correctTileX(int xtile, int zoom) {
+        if (xtile < 0)
+            xtile=0;
+        if (xtile >= (1<<zoom))
+            xtile=((1<<zoom)-1);
+        return xtile;
+    }
+
+    public static int correctTileY(int ytile, int zoom) {
+        if (ytile < 0)
+            ytile=0;
+        if (ytile >= (1<<zoom))
+            ytile=((1<<zoom)-1);
+        return ytile;
+    }
+
+    public static TileBoundingBox tile2boundingBox(final int x, final int y, final int zoom) {
+        TileBoundingBox bb = new TileBoundingBox();
+        bb.north = tile2lat(y, zoom);
+        bb.south = tile2lat(y + 1, zoom);
+        bb.west = tile2lon(x, zoom);
+        bb.east = tile2lon(x + 1, zoom);
+        return bb;
+    }
+
+    static float tile2lon(int x, int z) {
+        return (float) (x / Math.pow(2.0, z) * 360.0 - 180);
+    }
+
+    static float tile2lat(int y, int z) {
+        double n = Math.PI - (2.0 * Math.PI * y) / Math.pow(2.0, z);
+        return (float)Math.toDegrees(Math.atan(Math.sinh(n)));
+    }
+
+    public static float convertMetersToLonits(float elevation, float latitude) {
+        double metersPerDegLong = 2*Math.PI*Math.cos(Math.toRadians(latitude))*radiusOfEarth/360;
+        return (float)(elevation/metersPerDegLong);
+    }
+
+    public static double convertLonitsToMeters(double lonit, double latitude) {
+        return (lonit*(2*Math.PI*Math.cos(Math.toRadians(latitude))*radiusOfEarth/360));
+    }
+
+    public static float convertMetersToLatits(double meters) {
+        return (float) (meters/(2*Math.PI*radiusOfEarth/360));
+    }
+
+    public static float convertLatitsToMeters(float latit) {
+        return (float) (latit*2*Math.PI*radiusOfEarth/360);
+    }
+
+    public static double convertLonitsToLatits(double lonit, double latitude) {
+        return lonit * Math.cos(Math.toRadians(latitude));
+    }
+
+    public static float convertLatitsToLonits(float latit, float latitude) {
+        return latit / (float) Math.cos(Math.toRadians(latitude));
+    }
+
+    public static int convertLondexLatdexToMapTileIndex(int londex, int latdex) {
+        return cLondexFactor*(cLondexShift + londex) + cLatdexShift + latdex;
+    }
+
+    public static int convertMapTileIndexToLondex(int index) {
+        return index/cLondexFactor - cLondexShift;
+    }
+
+    /*
+    public static int convertMapTileIndexToLatdex(int index) {
+        return index % cLondexFactor - cLatdexShift;
+    }
+
+    public static int convertCoordinatesToLondex(double lon) {
+        return (int) Math.floor(SUB*lon);
+    }
+
+    public static int convertCoordinatesToLatdex(double lat) {
+        return (int) Math.floor(SUB*lat);
+    }
+
+    public static int convertCoordinatesToMapTileIndex(double lon, double lat) {
+        int londex = convertCoordinatesToLondex(lon);
+        int latdex = convertCoordinatesToLatdex(lat);
+
+        return convertLondexLatdexToMapTileIndex(londex, latdex);
+    }
+     */
+
+    public static int convertLatitsToTexture(float latits) {
+        return Math.round(256*256*10*(latits + 0.01f))*256 + 255;
+    }
+
+    public static float getWidgetUnitStep() {
+        return getUiShortSide() / 10f;
+    }
+
+    /**
+     * The widest a screen's short side counts as when sizing buttons and text, in
+     * density-independent pixels (1/160 inch): a little more than a large phone's 410-430.
+     * Buttons are a tenth of it, 48 dp, the size a fingertip presses comfortably.
+     */
+    static final float MAX_UI_SHORT_SIDE_DP = 480f;
+
+    /**
+     * Sizes as fractions of the whole window, whatever its size: the headless renderer's,
+     * whose pictures stand for a phone's screen however large they are rendered.
+     */
+    private static volatile boolean proportionalInterface = false;
+
+    /** Called by the headless renderer, before the app starts; see {@link #getUiShortSide()}. */
+    public static void setProportionalInterface(boolean proportional) {
+        proportionalInterface = proportional;
+    }
+
+    public static boolean isProportionalInterface() {
+        return proportionalInterface;
+    }
+
+    /**
+     * The screen's short side as far as sizing buttons and text goes, in the stage's pixels.
+     * Buttons are a tenth of it, fonts other fractions.
+     *
+     * <ul>
+     * <li>Phones: the real short side, as it always was - about 40 dp buttons.
+     * <li>Tablets and unfolded foldables (Android, iOS): capped at {@link #MAX_UI_SHORT_SIDE_DP},
+     * so the controls stay finger-sized instead of growing with the screen. On iOS the app
+     * works in pixels and the backend's density is its ppi / 160.
+     * <li>Desktop: a fixed 480 window pixels, 48 px buttons, however large or small the window
+     * is and however it is resized. The monitor's reported density is not used: it is often a
+     * guess, and a mouse pointer does not need fingertip-sized targets anyway.
+     * <li>The headless renderer: the real short side (see {@link #setProportionalInterface}).
+     * </ul>
+     */
+    public static float getUiShortSide() {
+        float shortSide = Math.min(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+        if (proportionalInterface) {
+            return shortSide;
+        }
+        com.badlogic.gdx.Application.ApplicationType type = Gdx.app.getType();
+        if (type == com.badlogic.gdx.Application.ApplicationType.Android
+                || type == com.badlogic.gdx.Application.ApplicationType.iOS) {
+            return shortSide * uiScale(shortSide, Gdx.graphics.getDensity());
+        }
+        return MAX_UI_SHORT_SIDE_DP;
+    }
+
+    /** {@link #getUiShortSide()} as a fraction of the screen's real short side. */
+    public static float getUiScale() {
+        float shortSide = Math.min(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+        return shortSide > 0 ? getUiShortSide() / shortSide : 1f;
+    }
+
+    /**
+     * {@link #getUiScale()} for a short side in pixels and a density in pixels per dp (on iOS,
+     * where the app works in pixels, the backend's ppi / 160).
+     */
+    static float uiScale(float shortSidePixels, float density) {
+        if (!(density > 0f) || !(shortSidePixels > 0f)) {
+            return 1f;
+        }
+        return Math.min(1f, MAX_UI_SHORT_SIDE_DP * density / shortSidePixels);
+    }
+
+    /**
+     * Ground distance between two points of the world frame, in metres.
+     *
+     * <p>The order matters: <b>pos2 defines the frame</b>. An x in this frame is a longitude
+     * scaled by the cosine of some latitude, and only that latitude recovers it, so both
+     * points are read at pos2's. Callers pass the camera as pos2, because a point produced by
+     * marching a ray out from the camera carries the camera's scale whatever latitude it
+     * lands at. Reading each point at its own latitude instead reported Seattle to Mount
+     * Rainier as 189 km rather than 94.5, and the app showed that figure to the user.
+     */
+    public static int computeDistanceBetweenWorldVectors(Vector3 pos1, Vector3 pos2) {
+        try {
+            double sphericalDist = LatLongUtils.sphericalDistance(
+                    // Both points are read in ONE frame - the second's latitude, which for
+                    // the usual caller (impact vs camera) is the camera's. Converting each
+                    // point with its own latitude mixes two frames and inflates the distance:
+                    // Seattle to Mount Rainier came out as 189 km instead of 94.5.
+                    new LatLong(pos1.y, convertLatitsToLonits(pos1.x, pos2.y)),
+                    new LatLong(pos2.y, convertLatitsToLonits(pos2.x, pos2.y))
+            );
+            return (int) Math.round(
+                    Math.sqrt(sphericalDist * sphericalDist +
+                            Math.pow(convertLatitsToMeters(pos1.z - pos2.z), 2)));
+        } catch (IllegalArgumentException illegalArgumentException) {
+            return Integer.MAX_VALUE;
+        }
+    }
+
+    public static String formatDistanceToUnitSystem(float distanceMeters) {
+        return formatDistanceToUnitSystem(distanceMeters, Float.POSITIVE_INFINITY);
+    }
+
+    public static String formatDistanceToUnitSystem(float distanceMeters, float thresholdMetersToKm) {
+        String elevString;
+        switch (P.getUnitSystem()) {
+            case METRIC:
+                if (distanceMeters > thresholdMetersToKm)
+                    elevString = Math.round(distanceMeters/1000) + "km";
+                else
+                    elevString = Math.round(distanceMeters) + "m";
+                break;
+            case IMPERIAL:
+                int eleFeet = Math.round(3.28084f*distanceMeters);
+                if (distanceMeters > thresholdMetersToKm)
+                    elevString = Math.round(eleFeet/5280f) + "miles";
+                else
+                    elevString = eleFeet + "ft";
+                break;
+            default:
+                throw new RuntimeException("Unknown unit system");
+        }
+        return elevString;
+    }
+}

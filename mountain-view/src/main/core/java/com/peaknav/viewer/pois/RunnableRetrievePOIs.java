@@ -1,0 +1,133 @@
+package com.peaknav.viewer.pois;
+
+import static com.peaknav.utils.PeakNavUtils.getLogger;
+
+import com.peaknav.utils.StoppableRunnable;
+import com.peaknav.viewer.controller.MapController;
+import com.peaknav.viewer.labels.DrawLabelCategory;
+import com.peaknav.viewer.labels.PoiObject;
+
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+
+public class RunnableRetrievePOIs extends StoppableRunnable {
+
+    private static final String TAG = "RunnableRetrievePOIs";
+    private final MapController C;
+
+    public RunnableRetrievePOIs(MapController C) {
+        // setName("thread-ThreadRetrievePOIs");
+        this.C = C;
+    }
+
+    /** Counted in ResourceStats.poiRetrievesInFlight from construction until finish(). */
+    private final java.util.concurrent.atomic.AtomicBoolean finished =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private volatile boolean started = false;
+
+    {
+        com.peaknav.utils.ResourceStats.poiRetrievesInFlight.incrementAndGet();
+    }
+
+    private void finish() {
+        if (finished.compareAndSet(false, true)) {
+            com.peaknav.utils.ResourceStats.poiRetrievesInFlight.decrementAndGet();
+        }
+    }
+
+    @Override
+    public void stop() {
+        super.stop();
+        if (!started) {
+            // Dropped from the queue before it ran: nobody else will count it out.
+            finish();
+        }
+    }
+
+    @Override
+    public void run() {
+        started = true;
+        getLogger().debug(TAG, "Entering RunnableRetrievePOIs.run()");
+        try {
+            getLogger().debug(TAG, "Calling redactNewPoiLists");
+            // TODO: sometimes sth happens here and data aren't loaded:
+            redactNewPoiListsLazy();
+            getLogger().debug(TAG, "Wait released");
+        } finally {
+            finish();
+        }
+    }
+
+    private void redactNewPoiListsLazy() {
+        getLogger().debug(TAG, "Calling C.readMapDataManager");
+
+        final List<PoiObject> newListOfPeaks = new LinkedList<>();
+        final List<PoiObject> newListOfNonPeaks = new LinkedList<>();
+
+        getLogger().debug(TAG, "Calling C.mapDataManager.getPeaks(...)");
+        // what happens if "peaksNearby" is being drawn when this overwrite occurs?
+        double currentLatitude = C.L.getCurrentLatitude();
+        double currentLongitude =  C.L.getCurrentLongitude();
+        C.mapDataManager.getPOIsByCoordLazy(currentLatitude, currentLongitude, foundPOIs -> {
+            getLogger().debug(TAG, "Retrieved " + foundPOIs.size() + " peaks");
+            for (PoiObject poiObject : foundPOIs) {
+                poiObject.updatePositionToTargetLongitude();
+                poiObject.fillDrawLabel(poiObject.drawLabelCategory);
+                assert poiObject.drawLabel != null;
+                if (poiObject.drawLabelCategory == DrawLabelCategory.PEAK) {
+                    newListOfPeaks.add(poiObject);
+                } else {
+                    newListOfNonPeaks.add(poiObject);
+                }
+                checkStopThrow();
+            }
+            getLogger().debug(TAG, "Peak data added to peakDataNew");
+
+            getLogger().debug(TAG, "Calling lock");
+            C.dataRetrieveThreadManager.stopRunnableUpdateVisibility();
+            // The swap must be all-or-nothing. There was a stop-check between clear()
+            // and the re-fill, and a retrieve stopped at that exact moment - which
+            // rapid retargeting made routine - left the master lists EMPTY or partial.
+            // Every later visibility pass then faithfully published a near-empty label
+            // set: labels vanished for whole half-second stretches of video, and
+            // interactively whenever a new retrieve pre-empted the last one. A stop
+            // request now takes effect before the swap starts or waits until it ends.
+            C.O.applyToAllListsOfPOIs((listOfPeaks, listOfNonPeaks) -> {
+                listOfPeaks.clear();
+                listOfPeaks.addAll(newListOfPeaks);
+                listOfNonPeaks.clear();
+                listOfNonPeaks.addAll(newListOfNonPeaks);
+            });
+
+            C.dataRetrieveThreadManager.triggerUpdateVisibilityPositionChanged();
+
+        });
+
+    }
+    private void redactNewPoiLists(List<PoiObject> newListOfPeaks, List<PoiObject> newListOfNonPeaks) {
+
+        getLogger().debug(TAG, "Calling C.readMapDataManager");
+
+        getLogger().debug(TAG, "Calling C.mapDataManager.getPeaks(...)");
+        // what happens if "peaksNearby" is being drawn when this overwrite occurs?
+        double currentLatitude = C.L.getCurrentLatitude();
+        double currentLongitude =  C.L.getCurrentLongitude();
+        ArrayList<PoiObject> foundPOIs = C.mapDataManager.getPOIsByCoord(currentLatitude, currentLongitude);
+        getLogger().debug(TAG, "Retrieved " + foundPOIs.size() + " peaks");
+        // TODO: "updatePeakData()" should be called before "peaksNearby" is overwritten:
+        // updatePeakData(foundPeaks, true);
+        for (PoiObject poiObject : foundPOIs) {
+            poiObject.fillDrawLabel(poiObject.drawLabelCategory);
+            assert poiObject.drawLabel != null;
+            if (poiObject.drawLabelCategory == DrawLabelCategory.PEAK) {
+                newListOfPeaks.add(poiObject);
+            } else {
+                newListOfNonPeaks.add(poiObject);
+            }
+            checkStopThrow();
+        }
+        getLogger().debug(TAG, "Peak data added to peakDataNew");
+    }
+
+}

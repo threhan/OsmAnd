@@ -1,0 +1,678 @@
+package com.peaknav.gesture;
+
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
+import com.badlogic.gdx.graphics.g3d.utils.CameraInputController;
+import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.math.Vector3;
+
+import java.util.ArrayList;
+
+import com.peaknav.viewer.PerspectiveCameraExt;
+import com.peaknav.viewer.screens.MapViewerScreen;
+
+public class MountainInputController extends CameraInputController {
+
+    public PerspectiveCameraExt perspectiveCamera;
+    private final ArrayList<PositionChangeListener> positionChangeListeners;
+    private final MapViewerScreen mapViewerScreen;
+
+    private final Vector3 tmpV1 = new Vector3();
+    private final Vector3 tmpV2 = new Vector3();
+
+    public final float rotationFactorBase = 0.2f;
+    public float rotationFactor = rotationFactorBase;
+
+    /**
+     * How far the arrow keys sweep the view in one second, measured in screen widths,
+     * which is the unit a mouse drag works in. Because rotationFactor already tracks
+     * the field of view, aiming automatically gets finer as the user zooms in.
+     */
+    public float lookScreensPerSecond = 0.8f;
+    /** Multiplier applied while Shift is held, for fine aiming and fine altitude. */
+    public float lookSlowFactor = 0.1f;
+
+    /**
+     * How much of the elevation bar the altitude keys travel in one second. The bar is
+     * deliberately not linear in metres, so this stays gentle near the ground and
+     * speeds up higher up, the same way dragging it does.
+     */
+    public float altitudeBarsPerSecond = 0.4f;
+
+    /**
+     * Field-of-view change per zoom keypress, in the units {@link #zoom(float)} takes.
+     * zoom() multiplies it by 50 internally, so 0.0015 is about a 7% step; holding the
+     * key lets the OS key-repeat stack the steps up into a smooth zoom.
+     */
+    public float zoomStepAmount = 0.0015f;
+    /** Multiplier on the zoom step while Shift is held: about a 1.4% step. */
+    public float zoomSlowFactor = 0.2f;
+
+    public int lookLeftKey = Input.Keys.LEFT;
+    public int lookRightKey = Input.Keys.RIGHT;
+    public int lookUpKey = Input.Keys.UP;
+    public int lookDownKey = Input.Keys.DOWN;
+    public int lookSlowKey = Input.Keys.SHIFT_LEFT;
+    public int altitudeUpKey = Input.Keys.PAGE_UP;
+    public int altitudeDownKey = Input.Keys.PAGE_DOWN;
+    // Zoom deliberately has no key fields: it is matched on the typed character in
+    // keyTyped(), which is layout-independent, not on a physical keycode.
+
+    private boolean lookLeftPressed;
+    private boolean lookRightPressed;
+    private boolean lookUpPressed;
+    private boolean lookDownPressed;
+    private boolean lookSlowPressed;
+    private boolean altitudeUpPressed;
+    private boolean altitudeDownPressed;
+    // Keycode of a possibly-unbound key from keyDown; the overlay is raised at keyUp,
+    // not keyDown. keyUp always follows keyTyped for a real press, so the character
+    // bindings (+ - = ?) have already cleared this by then — a bound key never even
+    // briefly flashes the overlay. -1 means "no candidate".
+    private int unboundCandidateKeycode = -1;
+
+    /**
+     * While the gyroscope points the camera, nothing else may: a drag, a pinch, the wheel or
+     * a key moved the camera for one frame and the sensor moved it back on the next, and
+     * pointing the phone down the pinch zoom fought the sensor rather than zooming. Taps
+     * still measure, and the elevation bar still raises the camera.
+     */
+    private volatile boolean cameraControlsSuspended = false;
+
+    public void setCameraControlsSuspended(boolean suspended) {
+        cameraControlsSuspended = suspended;
+        // A key held when the gyroscope took over would otherwise resume turning when it is
+        // switched off, and the drag in progress would carry on from where the finger was.
+        clearKeyboardLook();
+    }
+
+    public boolean isCameraControlsSuspended() {
+        return cameraControlsSuspended;
+    }
+
+    public static class MountainGestureListener extends CameraGestureListener {
+        private final Vector2 tmpV1 = new Vector2();
+        private final Vector2 tmpV2 = new Vector2();
+        private final MapViewerScreen mapViewerScreen;
+        private final PerspectiveCameraExt camera;
+
+        MountainGestureListener(MapViewerScreen mapViewerScreen, PerspectiveCameraExt camera) {
+            this.mapViewerScreen = mapViewerScreen;
+            this.camera = camera;
+        }
+
+        @Override
+        public boolean tap(float x, float y, int count, int button) {
+            // With a photo behind the terrain a quick double tap pins: the direction under
+            // the finger is fastened to that spot of the screen and the gestures turn and
+            // zoom the terrain around it (see PhotoPin). The next double tap releases it.
+            // The red ring says which state it is in; no text. (The first of the two taps
+            // has already measured, as any tap does; that is harmless.)
+            if (count == 2) {
+                if (PhotoPin.isActive()) {
+                    PhotoPin.clear();
+                    return true;
+                }
+                if (mapViewerScreen.backgroundPicManager.getBackgroundPixmap() != null) {
+                    PhotoPin.set(x, y, camera.getPickRayStable(x, y).direction);
+                    return true;
+                }
+            }
+            // Over a photo a tap does not pick a point to measure, fly or orbit to: the
+            // terrain is being lined up with the picture, not travelled.
+            if (mapViewerScreen.backgroundPicManager.getBackgroundPixmap() != null) {
+                return false;
+            }
+            // A label tapped tells what it names; anywhere else closes that and picks a point.
+            if (mapViewerScreen.showFeatureAt(x, y)) {
+                return true;
+            }
+            // Picking a new point ends an orbit around the old one.
+            mapViewerScreen.stopOrbit();
+
+            mapViewerScreen.impact = mapViewerScreen.detectClicked3DPosition(x, y);
+            boolean valid = mapViewerScreen.updateImpact();
+            if (valid) {
+                mapViewerScreen.impactToastDistance();
+            }
+            return valid;
+        }
+
+        private final static float rotFactor = 1f/500.f;
+        private final Vector3 pinAxis = new Vector3();
+
+        @Override
+        public boolean pinch(Vector2 initialPointer1, Vector2 initialPointer2, Vector2 pointer1, Vector2 pointer2) {
+            tmpV1.set(initialPointer2).sub(initialPointer1).nor();
+            tmpV2.set(pointer2).sub(pointer1).nor();
+            float rotationDeg = (float) Math.toDegrees(Math.asin(tmpV1.crs(tmpV2)));
+
+            if (((MountainInputController) controller).cameraControlsSuspended) {
+                return true;
+            }
+
+            if (PhotoPin.isActive()) {
+                // Twisting two fingers turns the terrain about the pin, no tilt limit: a
+                // photo may well have been taken with the camera rolled.
+                if (Math.abs(rotationDeg) > 3.0) {
+                    camera.rotateAround(camera.position, PhotoPin.getDirection(pinAxis), -rotationDeg * rotFactor);
+                    camera.update();
+                }
+                return true;
+            }
+
+            if (Math.abs(rotationDeg) > 3.0) {
+                camera.rotateAround(camera.position, camera.direction, -rotationDeg*rotFactor);
+                // At most MAX_ROLL_DEGREES of roll. Measured as the roll itself: the test was on
+                // up.z, which is cos(pitch) x cos(roll), so with the camera looking up or down by
+                // more than about 6 degrees every twist was undone - and up.z was then written
+                // over, leaving an up vector neither of unit length nor square to the direction.
+                if (rollDegrees(camera) > MAX_ROLL_DEGREES) {
+                    camera.rotateAround(camera.position, camera.direction, rotationDeg*rotFactor);
+                    return true;
+                }
+                return false;
+            } else {
+                return true;
+            }
+        }
+
+    }
+
+    /** The most the two-finger twist may roll the view: what the old test allowed when level. */
+    static final float MAX_ROLL_DEGREES = 5.8f;
+
+    /**
+     * The camera's roll: the angle between its up vector and the vertical as seen along its
+     * direction. 0 for a level camera, whatever its pitch.
+     */
+    static float rollDegrees(com.badlogic.gdx.graphics.Camera camera) {
+        Vector3 d = camera.direction;
+        // The world's up, less its part along the direction: the up a level camera would have.
+        float along = d.z;
+        float x = -along * d.x, y = -along * d.y, z = 1f - along * d.z;
+        float length = (float) Math.sqrt(x * x + y * y + z * z);
+        if (length < 1e-4f) {
+            return 0f;   // looking straight up or down: no roll to speak of
+        }
+        Vector3 up = camera.up;
+        float upLength = up.len();
+        if (upLength < 1e-6f) {
+            return 0f;
+        }
+        float cos = (x * up.x + y * up.y + z * up.z) / (length * upLength);
+        return (float) Math.toDegrees(Math.acos(Math.max(-1f, Math.min(1f, cos))));
+    }
+
+    private MountainInputController(MountainGestureListener listener, PerspectiveCameraExt camera, ArrayList<PositionChangeListener> positionChangeListeners, MapViewerScreen mapViewerScreen) {
+        super(listener, camera);
+        this.perspectiveCamera = camera;
+        this.positionChangeListeners = positionChangeListeners;
+        this.mapViewerScreen = mapViewerScreen;
+
+        // CameraInputController ships W/S = fly forward/back and A/D = rotate. That
+        // behaviour is undocumented here and moves the camera through the terrain, so
+        // disable it (no valid keycode is negative) and instead map W/A/S/D onto the
+        // same "aim the view" action as the arrow keys — see setLookKeyPressed().
+        forwardKey = -1;
+        backwardKey = -1;
+        rotateRightKey = -1;
+        rotateLeftKey = -1;
+    }
+
+    public static MountainInputController getInstance(PerspectiveCameraExt camera, ArrayList<PositionChangeListener> positionChangeListeners, MapViewerScreen mapViewerScreen) {
+        MountainGestureListener listener = new MountainGestureListener(mapViewerScreen, camera);
+        return new MountainInputController(listener, camera, positionChangeListeners, mapViewerScreen);
+    }
+
+    // Where the finger was and is, for turning the view about a pinned point (see PhotoPin):
+    // the parent class only hands process() the deltas, but the rotation about the pin is
+    // the angle the finger sweeps around it, which needs the positions.
+    private float dragPrevX, dragPrevY, dragX, dragY;
+    private final Vector3 pinAxis = new Vector3();
+
+    @Override
+    public boolean touchDown(int screenX, int screenY, int pointer, int button) {
+        dragPrevX = dragX = screenX;
+        dragPrevY = dragY = screenY;
+        if (pointer == 0) {
+            forgetLostFingers(button);
+        }
+        return super.touchDown(screenX, screenY, pointer, button);
+    }
+
+    /**
+     * A touch Android cancelled - the notification shade pulled down, a dialog or another app
+     * taking the screen mid-drag - is a finger lifted. CameraInputController does not handle
+     * the cancel, so it kept that finger as still down: every touch after it counted as a
+     * second finger, and one-finger drags stopped turning the camera for good, while the
+     * pinch and the elevation bar, handled elsewhere, went on working.
+     */
+    @Override
+    public boolean touchCancelled(int screenX, int screenY, int pointer, int button) {
+        boolean handled = super.touchCancelled(screenX, screenY, pointer, button);   // the gesture detector's own reset
+        super.touchUp(screenX, screenY, pointer, button);   // and the camera controller's finger
+        return handled;
+    }
+
+    private static java.lang.reflect.Field touchedField, multiTouchField;
+    private static boolean fieldsLooked;
+
+    /**
+     * A first finger coming down, with no other finger on the screen, starts afresh: any
+     * finger CameraInputController still counts as down lost its lift somewhere - a cancel
+     * from an older backend, a lift delivered to a screen no longer on show. It keeps them in
+     * private fields, reached by reflection; where that is not possible nothing changes, and
+     * touchCancelled covers the common case.
+     */
+    private void forgetLostFingers(int pressed) {
+        for (int i = 1; i < 20; i++) {
+            if (com.badlogic.gdx.Gdx.input != null && com.badlogic.gdx.Gdx.input.isTouched(i)) {
+                return;   // a real second finger: a pinch is starting
+            }
+        }
+        for (int other = 0; other <= 4; other++) {
+            if (other != pressed && com.badlogic.gdx.Gdx.input != null
+                    && com.badlogic.gdx.Gdx.input.isButtonPressed(other)) {
+                return;   // a second mouse button, the first still held: nothing was lost
+            }
+        }
+        try {
+            if (!fieldsLooked) {
+                fieldsLooked = true;
+                touchedField = com.badlogic.gdx.graphics.g3d.utils.CameraInputController.class.getDeclaredField("touched");
+                multiTouchField = com.badlogic.gdx.graphics.g3d.utils.CameraInputController.class.getDeclaredField("multiTouch");
+                touchedField.setAccessible(true);
+                multiTouchField.setAccessible(true);
+            }
+            if (touchedField != null && multiTouchField != null) {
+                touchedField.setInt(this, 0);
+                multiTouchField.setBoolean(this, false);
+            }
+        } catch (Throwable unavailable) {
+            touchedField = null;
+            multiTouchField = null;
+        }
+        // The lost finger's button as well. While it is set, touchDown keeps the old touch as
+        // the drag's start, and the first drag turned the camera by the whole way from there.
+        this.button = -1;
+    }
+
+    @Override
+    public boolean touchDragged(int screenX, int screenY, int pointer) {
+        dragPrevX = dragX;
+        dragPrevY = dragY;
+        dragX = screenX;
+        dragY = screenY;
+        return super.touchDragged(screenX, screenY, pointer);
+    }
+
+    /**
+     * Turns the camera about the pinned direction by the angle the finger swept around
+     * the pin on screen. The axis passes through the camera, so the pinned direction
+     * keeps projecting onto the same pixel whatever the angle.
+     */
+    private boolean rotateAboutPin() {
+        float px = PhotoPin.getScreenX(), py = PhotoPin.getScreenY();
+        double a0 = Math.atan2(dragPrevY - py, dragPrevX - px);
+        double a1 = Math.atan2(dragY - py, dragX - px);
+        double swept = Math.toDegrees(a1 - a0);
+        if (swept > 180) swept -= 360;
+        if (swept < -180) swept += 360;
+        if (Math.hypot(dragPrevX - px, dragPrevY - py) < 8 || Math.hypot(dragX - px, dragY - py) < 8) {
+            return false; // too close to the pin to define an angle
+        }
+        // Screen y points down, so a sweep that looks clockwise has a positive angle here;
+        // a positive rotation about the forward axis turns the CAMERA clockwise, i.e. the
+        // terrain anticlockwise - hence the sign, so the terrain follows the finger.
+        camera.rotateAround(camera.position, PhotoPin.getDirection(pinAxis), (float) -swept);
+        if (autoUpdate) camera.update();
+        return true;
+    }
+
+    /**
+     * After a zoom, puts the pinned direction back on its pixel: the change of focal
+     * length moved every off-centre point, so the camera is turned by the rotation that
+     * carries the direction now under the pin's pixel onto the pinned one.
+     */
+    private void keepPinAfterZoom() {
+        camera.update();
+        Vector3 under = perspectiveCamera.getPickRayStable(PhotoPin.getScreenX(), PhotoPin.getScreenY()).direction;
+        Vector3 pinned = PhotoPin.getDirection(pinAxis);
+        float dot = Math.max(-1f, Math.min(1f, under.dot(pinned)));
+        float angle = (float) Math.toDegrees(Math.acos(dot));
+        if (angle < 1e-3f) {
+            return;
+        }
+        Vector3 axis = under.crs(pinned);
+        if (axis.len2() < 1e-12f) {
+            return;
+        }
+        camera.rotateAround(camera.position, axis.nor(), angle);
+        camera.update();
+    }
+
+    protected boolean process(float deltaX, float deltaY, int button) {
+        if (cameraControlsSuspended) {
+            return false;
+        }
+        // Taking hold of the view ends the orbit: two things steering one camera only
+        // produces a fight, and the person with their hand on it should win.
+        mapViewerScreen.stopOrbit();
+        boolean processed = false;
+        if (button == rotateButton && PhotoPin.isActive()) {
+            return rotateAboutPin();
+        }
+        if (button == rotateButton) {
+            tmpV1.set(camera.direction).crs(camera.up);
+            camera.rotateAround(camera.position, tmpV1, -deltaY * rotationFactor * rotateAngle);
+            if (camera.up.z < 0) {
+                // Undo rotation
+                camera.rotateAround(camera.position, tmpV1, deltaY * rotationFactor * rotateAngle);
+            } else {
+                processed = true;
+            }
+            camera.rotateAround(camera.position, Vector3.Z, deltaX * rotationFactor * rotateAngle);
+        } else if (button == translateButton) {
+            /*
+            camera.translate(tmpV1.set(0, 0, -1).crs(camera.up).nor().scl(-deltaX * translateUnits));
+            tmpV2.set(camera.up);
+            tmpV2.z = 0;
+            tmpV2.nor();
+            camera.translate(tmpV2.scl(-deltaY * translateUnits));
+             */
+            camera.translate(tmpV1.set(camera.direction).crs(camera.up).nor().scl(-deltaX * translateUnits));
+            camera.translate(tmpV2.set(camera.up).scl(-deltaY * translateUnits));
+            if (translateTarget) target.add(tmpV1).add(tmpV2);
+            processed = true;
+        } else if (button == forwardButton) {
+            camera.translate(tmpV1.set(camera.direction).scl(deltaY * translateUnits));
+            if (forwardTarget) target.add(tmpV1);
+            processed = false;
+        }
+        if (autoUpdate) camera.update();
+        return processed;
+    }
+
+    /**
+     * Moves the terrain on screen by a few pixels, for lining it up with a photo more finely
+     * than a finger can drag: the camera turns about its own up and right axes by the angle a
+     * pixel spans, so the move is exact on screen whatever the camera's roll. Positive
+     * {@code dx} is to the right, positive {@code dy} up.
+     */
+    public void nudgeTerrain(float dxPixels, float dyPixels) {
+        if (cameraControlsSuspended) {
+            return;
+        }
+        mapViewerScreen.stopOrbit();
+        float degreesPerPixel = perspectiveCamera.fieldOfView / Math.max(1, Gdx.graphics.getHeight());
+        // Turning the camera about its up axis to the left carries the terrain to the right.
+        camera.rotateAround(camera.position, tmpV2.set(camera.up), dxPixels * degreesPerPixel);
+        // Turning it up about its right axis carries the terrain down.
+        tmpV1.set(camera.direction).crs(camera.up).nor();
+        camera.rotateAround(camera.position, tmpV1, -dyPixels * degreesPerPixel);
+        if (camera.up.z < 0) {
+            camera.rotateAround(camera.position, tmpV1, dyPixels * degreesPerPixel);   // not over the top
+        }
+        camera.update();
+    }
+
+    /** Turns the terrain about the pinned point, clockwise on screen for a positive angle. */
+    public void turnAboutPin(float degrees) {
+        if (cameraControlsSuspended || !PhotoPin.isActive()) {
+            return;
+        }
+        // As a finger sweeping round the pin does (rotateAboutPin): the camera turns the other way.
+        camera.rotateAround(camera.position, PhotoPin.getDirection(pinAxis), -degrees);
+        camera.update();
+    }
+
+    /** Stretches the terrain out from the pinned point by {@code ratio}, which stays put. */
+    public void stretchAboutPin(float ratio) {
+        if (!PhotoPin.isActive()) {
+            return;
+        }
+        zoomByPinchScale(ratio);   // zoom() puts the pin back on its pixel
+    }
+
+    /**
+     * The mouse wheel: a fixed ratio of the field of view per notch, as the zoom keys step.
+     * libGDX's own scaled the step by {@code translateUnits}, which the viewer sets to the
+     * camera's height above sea level: a notch changed the view by 7% at 1500 m, next to
+     * nothing on the coast, and the wrong way below sea level.
+     */
+    @Override
+    public boolean scrolled(float amountX, float amountY) {
+        float step = lookSlowPressed ? zoomStepAmount * zoomSlowFactor : zoomStepAmount;
+        return amountY != 0f && zoom(-amountY * step);
+    }
+
+    /**
+     * Drives the camera from the keyboard, so the view can be aimed and raised without
+     * a mouse. The arrows move the camera rather than the landscape, which is the
+     * opposite of dragging, hence the flipped signs below.
+     */
+    @Override
+    public void update() {
+        super.update();
+
+        float slow = lookSlowPressed ? lookSlowFactor : 1f;
+        float deltaTime = Gdx.graphics.getDeltaTime();
+
+        updateKeyboardLook(slow * deltaTime);
+        updateKeyboardAltitude(slow * deltaTime);
+    }
+
+    private void updateKeyboardLook(float scaledDeltaTime) {
+        float deltaX = (lookLeftPressed ? 1f : 0f) - (lookRightPressed ? 1f : 0f);
+        float deltaY = (lookDownPressed ? 1f : 0f) - (lookUpPressed ? 1f : 0f);
+        if (deltaX == 0f && deltaY == 0f)
+            return;
+
+        float amount = lookScreensPerSecond * scaledDeltaTime;
+        if (PhotoPin.isActive()) {
+            // With a photo pinned, the drag turns about the pin, by the angle the mouse swept
+            // round it - which the keys do not sweep: going through process() repeated the last
+            // drag's angle on every frame, whichever key. Left and right turn the terrain about
+            // the pin instead, at a fixed rate; up and down have nothing to do there.
+            if (deltaX != 0f) {
+                turnAboutPin(-deltaX * PIN_TURN_DEGREES_PER_SECOND * scaledDeltaTime);
+            }
+            return;
+        }
+        // Reuse the drag path so that the guard against tipping the camera over the
+        // vertical applies to the keyboard exactly as it does to the mouse.
+        process(deltaX * amount, deltaY * amount, rotateButton);
+    }
+
+    /** How fast the arrow keys turn the terrain about a pinned photo point. */
+    private static final float PIN_TURN_DEGREES_PER_SECOND = 20f;
+
+    private void updateKeyboardAltitude(float scaledDeltaTime) {
+        float delta = (altitudeUpPressed ? 1f : 0f) - (altitudeDownPressed ? 1f : 0f);
+        if (delta == 0f || mapViewerScreen == null || cameraControlsSuspended)
+            return;
+
+        mapViewerScreen.nudgeCameraElevationBar(delta * altitudeBarsPerSecond * scaledDeltaTime);
+    }
+
+    private boolean setLookKeyPressed(int keycode, boolean pressed) {
+        // W/A/S/D mirror the arrow keys (up/left/down/right) so both aim the view.
+        if (keycode == lookLeftKey || keycode == Input.Keys.A) {
+            lookLeftPressed = pressed;
+        } else if (keycode == lookRightKey || keycode == Input.Keys.D) {
+            lookRightPressed = pressed;
+        } else if (keycode == lookUpKey || keycode == Input.Keys.W) {
+            lookUpPressed = pressed;
+        } else if (keycode == lookDownKey || keycode == Input.Keys.S) {
+            lookDownPressed = pressed;
+        } else if (keycode == altitudeUpKey) {
+            altitudeUpPressed = pressed;
+        } else if (keycode == altitudeDownKey) {
+            altitudeDownPressed = pressed;
+        } else if (keycode == lookSlowKey || keycode == Input.Keys.SHIFT_RIGHT) {
+            // Either Shift slows the camera, not only the left one.
+            lookSlowPressed = pressed;
+            // The modifier alone points nothing, so let it through to the other processors.
+            return false;
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean keyDown(int keycode) {
+        boolean handled = setLookKeyPressed(keycode, true);
+
+        if (mapViewerScreen != null && mapViewerScreen.isKeyboardControlsVisible()) {
+            // While the overlay is up, Escape or any real control dismisses it; keys
+            // with no binding leave it in place, so a hunt-and-peck user keeps seeing it.
+            if (keycode == Input.Keys.ESCAPE || isCameraKeyBound(keycode)) {
+                mapViewerScreen.hideKeyboardControls();
+            }
+        } else if (mapViewerScreen != null
+                && !isCameraKeyBound(keycode)
+                && !isIgnoredForHelp(keycode)) {
+            // Possibly unbound. keyTyped fires next and clears this for the character
+            // bindings (+ - = ?); if it survives to keyUp, the key had no binding.
+            unboundCandidateKeycode = keycode;
+        }
+
+        return super.keyDown(keycode) || handled;
+    }
+
+    /**
+     * Zoom and help are bound to the typed CHARACTER rather than a physical key, so they
+     * are independent of the keyboard layout: wherever '+', '=', '-' and '?' sit on the
+     * user's keyboard, the OS translates the key to that character and delivers it here.
+     * A bound character also cancels the unbound-key candidate so the overlay is never
+     * raised for it, and dismisses the overlay if it is already shown.
+     * <p>
+     * With Shift held the zoom step is finer. Shift changes the character, so the
+     * shifted forms of the zoom keys are matched too: '+' ('=' on US layouts), '*'
+     * ('+' on Italian and German ones) and '_' ('-' on most).
+     */
+    @Override
+    public boolean keyTyped(char character) {
+        boolean bound = true;
+        float step = lookSlowPressed ? zoomStepAmount * zoomSlowFactor : zoomStepAmount;
+        if (character == '+' || character == '='
+                || (lookSlowPressed && character == '*')) {
+            zoom(step);
+        } else if (character == '-' || (lookSlowPressed && character == '_')) {
+            zoom(-step);
+        } else if (character == '?' && mapViewerScreen != null) {
+            // The "?" button opens the tutorial (the keyboard help is separate).
+            mapViewerScreen.activateHelpButton();
+        } else {
+            bound = false;
+        }
+
+        if (bound) {
+            unboundCandidateKeycode = -1;
+            if (mapViewerScreen != null) {
+                mapViewerScreen.hideKeyboardControls();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /** Keys that drive the camera: arrows, W/A/S/D, altitude and the slow modifier. */
+    private boolean isCameraKeyBound(int keycode) {
+        return keycode == lookLeftKey || keycode == lookRightKey
+                || keycode == lookUpKey || keycode == lookDownKey
+                || keycode == Input.Keys.W || keycode == Input.Keys.A
+                || keycode == Input.Keys.S || keycode == Input.Keys.D
+                || keycode == altitudeUpKey || keycode == altitudeDownKey
+                || keycode == lookSlowKey;
+    }
+
+    /** Modifiers and Escape: pressing them alone should not raise the overlay. */
+    private boolean isIgnoredForHelp(int keycode) {
+        return keycode == Input.Keys.SHIFT_LEFT || keycode == Input.Keys.SHIFT_RIGHT
+                || keycode == Input.Keys.CONTROL_LEFT || keycode == Input.Keys.CONTROL_RIGHT
+                || keycode == Input.Keys.ALT_LEFT || keycode == Input.Keys.ALT_RIGHT
+                || keycode == Input.Keys.SYM || keycode == Input.Keys.ESCAPE
+                || keycode == Input.Keys.UNKNOWN;
+    }
+
+    @Override
+    public boolean keyUp(int keycode) {
+        boolean handled = setLookKeyPressed(keycode, false);
+
+        // A key with no binding was pressed and released (keyTyped did not claim it):
+        // reveal the keyboard-controls overlay so the user discovers what the keys do.
+        if (keycode == unboundCandidateKeycode) {
+            unboundCandidateKeycode = -1;
+            if (mapViewerScreen != null) {
+                mapViewerScreen.showKeyboardControls();
+            }
+        }
+
+        return super.keyUp(keycode) || handled;
+    }
+
+    /**
+     * Releases every held key. A window that loses focus mid-keypress never delivers
+     * the matching keyUp, which would otherwise leave the camera spinning by itself.
+     */
+    public void clearKeyboardLook() {
+        lookLeftPressed = false;
+        lookRightPressed = false;
+        lookUpPressed = false;
+        lookDownPressed = false;
+        lookSlowPressed = false;
+        altitudeUpPressed = false;
+        altitudeDownPressed = false;
+        unboundCandidateKeycode = -1;
+    }
+
+    public static final float FIELD_OF_VIEW_MAX = 135.f;
+    public static final float FIELD_OF_VIEW_MIN = 5.f;
+
+    final float pinchZoomFactor2 = 0.01f;
+    final float pinchZoomFactor3 = 50.f;
+
+    @Override
+    protected boolean pinchZoom (float amount) {
+        return zoom(pinchZoomFactor2 * amount);
+    }
+
+    /**
+     * A pinch that has grown by {@code ratio} since its last step - a touchpad's, on the
+     * desktop: the field of view shrinks by the same factor, as between two fingers on a
+     * phone. zoom() scales the view by 1 - 50 * amount.
+     */
+    public boolean zoomByPinchScale(float ratio) {
+        if (!(ratio > 0f))
+            return false;
+        return zoom((1f - 1f / ratio) / pinchZoomFactor3);
+    }
+
+    @Override
+    public boolean zoom (float amount) {
+        if (cameraControlsSuspended) {
+            return false;
+        }
+        amount *= pinchZoomFactor3;
+        float delta = -perspectiveCamera.getAngleForCompassDelta()*amount;
+        float newFieldOfView = perspectiveCamera.getAngleForCompassDelta() + delta;
+        if (newFieldOfView > FIELD_OF_VIEW_MAX || newFieldOfView < FIELD_OF_VIEW_MIN) {
+            if (camera instanceof  PerspectiveCameraExt)
+                ((PerspectiveCameraExt)camera).resizeFieldOfViewToBounds();
+            return false;
+        }
+        perspectiveCamera.fieldOfView += delta * perspectiveCamera.fieldOfView / perspectiveCamera.getAngleForCompassDelta();
+        for (PositionChangeListener positionChangeListener : positionChangeListeners) {
+            positionChangeListener.onZoomChanged(newFieldOfView);
+        }
+        if (autoUpdate) camera.update();
+        if (PhotoPin.isActive()) {
+            keepPinAfterZoom();
+        }
+        return true;
+    }
+
+}

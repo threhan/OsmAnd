@@ -1,0 +1,4 @@
+Source: https://github.com/Upabjojr/PeakNavApp
+Commit: 77383cbf553e02600faedcba75416c621479b342
+License: GPL-3.0-only; see LICENSE and THIRD_PARTY_LICENSES.md.
+Adapted Android/core subset for OsmAnd Mountain View.

@@ -34,7 +34,7 @@ object ForecastComparisonUi {
         val dark = Color.rgb(58,58,58)
         val pale = Color.rgb(224,218,197)
         val red = Color.rgb(178,8,0)
-        val order = if(place != null) listOf(place.source) else listOf(WeatherSource.ECMWF,WeatherSource.GFS,WeatherSource.ICON,WeatherSource.GEM)
+        var order = if(place != null) listOf(place.source) else listOf(WeatherSource.ECMWF,WeatherSource.GFS,WeatherSource.ICON,WeatherSource.GEM,WeatherSource.IFS)
         val results = mutableMapOf<WeatherSource,OpenForecastData.Forecast>()
         val errors = mutableMapOf<WeatherSource,String>()
         val prefs = activity.getSharedPreferences("forecast_comparison_ui",0)
@@ -68,6 +68,7 @@ object ForecastComparisonUi {
             gravity=Gravity.CENTER;setPadding(dp(16),dp(3),dp(16),0);maxLines=2
         })
         root.addView(text(activity.getString(if(place == null) R.string.forecast_chart_subtitle else R.string.forecast_daily_title),19f,Color.LTGRAY).apply {gravity=Gravity.CENTER;setPadding(0,0,0,dp(16))})
+        val sourceSelector = if (place != null) button("") {} else null
         if(place != null) {
             val actions=LinearLayout(activity).apply {gravity=Gravity.CENTER;setPadding(dp(8),0,dp(8),dp(6))}
             fun action(label:Int, callback:()->Unit) {actions.addView(button(activity.getString(label)){dialog.dismiss();callback()},LinearLayout.LayoutParams(0,dp(40),1f))}
@@ -75,6 +76,7 @@ object ForecastComparisonUi {
             action(R.string.forecast_places_delete){delete?.invoke()}
             action(R.string.forecast_compare_title){show(activity,lat,lon,name)}
             root.addView(actions)
+            root.addView(sourceSelector, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         }
         val tabs=LinearLayout(activity).apply {gravity=Gravity.CENTER_VERTICAL;background=shape(Color.rgb(78,78,78));setPadding(dp(2),0,dp(2),0)}
         val tabsContainer=LinearLayout(activity).apply {setPadding(dp(15),dp(4),dp(15),dp(8));addView(tabs)}
@@ -101,7 +103,9 @@ object ForecastComparisonUi {
         fun detail(time:Long) {
             if(place != null && interval == 24) {
                 dialog.dismiss()
-                DailyForecastUi.showDetails(activity,place,edit ?: {},delete ?: {},hourly ?: {})
+                DailyForecastUi.showDetails(activity,place.copy(source = order.single()),edit ?: {},delete ?: {}) {
+                    OpenForecastUi.show(activity, lat, lon, order.single())
+                }
                 return
             }
             val message=StringBuilder()
@@ -122,6 +126,7 @@ object ForecastComparisonUi {
         }
         lateinit var render:()->Unit
         render={
+            sourceSelector?.text = activity.getString(R.string.forecast_switch_source, activity.getString(order.single().titleId))
             val scrollY=vertical.scrollY
             panels.removeAllViews();charts.clear()
             val sources=order.filter{it.settingValue !in hidden}.sortedBy{if(it.settingValue==pinned)0 else 1}
@@ -130,9 +135,9 @@ object ForecastComparisonUi {
             dailyStatus?.let {panels.addView(text(it,11f,Color.LTGRAY).apply {setPadding(dp(12),dp(4),dp(12),dp(4))})}
             for(source in sources){
                 val row=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(9),0,dp(6),0)}
-                val resolution=when(source){WeatherSource.ECMWF->"25 km";WeatherSource.GFS->"13 km";WeatherSource.ICON->"13 km";WeatherSource.GEM->"15 km"}
+                val resolution=when(source){WeatherSource.ECMWF->"25 km";WeatherSource.GFS->"13 km";WeatherSource.ICON->"13 km";WeatherSource.GEM->"15 km";WeatherSource.IFS->"9 km"}
                 row.addView(text(source.name,15f).apply{setTypeface(typeface,Typeface.NORMAL)},LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,dp(32)))
-                row.addView(text("  $resolution",10f,Color.LTGRAY),LinearLayout.LayoutParams(0,dp(32),1f))
+                row.addView(text("  $resolution / " + activity.getString(R.string.forecast_model_days, source.pointForecastDays),10f,Color.LTGRAY),LinearLayout.LayoutParams(0,dp(32),1f))
                 if(place == null) row.addView(button(activity.getString(R.string.forecast_chart_hide)){
                     hidden.add(source.settingValue);prefs.edit().putStringSet("hidden",hidden.toSet()).apply();render()
                 })
@@ -144,7 +149,7 @@ object ForecastComparisonUi {
                 if(errors.containsKey(source))panels.addView(text(errors.getValue(source),11f,Color.rgb(255,190,170)).apply{setPadding(dp(12),dp(2),dp(12),dp(3))})
                 else if(results[source]==null && daily==null)panels.addView(text(activity.getString(R.string.open_weather_loading),11f,Color.LTGRAY).apply{setPadding(dp(12),0,0,0)})
                 val chart=ForecastComparisonChart(activity,start,{x->offset=x;charts.values.forEach{it.offset=x}},::detail).apply{
-                    this.intervalHours=interval;this.clouds=clouds;forecast=results[source];dailyForecast=daily
+                    this.days=order.maxOf { it.pointForecastDays };this.intervalHours=interval;this.clouds=clouds;forecast=results[source];dailyForecast=daily
                 }
                 charts[source]=chart
                 panels.addView(chart,LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(if(clouds)190 else 202)))
@@ -173,7 +178,7 @@ object ForecastComparisonUi {
             var pending=order.size + if(place != null) 1 else 0
             if(place != null) {
                 (activity.application as net.osmand.plus.OsmandApplication).weatherHelper.openForecastData
-                    .requestDaily(place.source,LatLon(lat,lon),force) callback@{result,cached,error->
+                    .requestDaily(order.single(),LatLon(lat,lon),force) callback@{result,cached,error->
                         if(!dialog.isShowing||activity.isDestroyed||activity.isFinishing||token!=generation)return@callback
                         if(result != null) {
                             daily=result
@@ -192,6 +197,24 @@ object ForecastComparisonUi {
                         pending--;retry.isEnabled=pending==0;render()
                     }
             }
+        }
+        sourceSelector?.setOnClickListener {
+            val sources = WeatherSource.entries.toList()
+            AlertDialog.Builder(activity).setTitle(R.string.weather_data_sources_prompt)
+                .setSingleChoiceItems(sources.map { activity.getString(it.titleId) }.toTypedArray(),
+                    sources.indexOf(order.single())) { picker, index ->
+                    picker.dismiss()
+                    val source = sources[index]
+                    if (source != order.single()) {
+                        order = listOf(source)
+                        daily = null
+                        dailyStatus = null
+                        results.clear()
+                        offset = 0f
+                        vertical.scrollTo(0, 0)
+                        request()
+                    }
+                }.setNegativeButton(R.string.shared_string_cancel, null).show()
         }
         dialog.setContentView(root)
         dialog.setOnDismissListener{generation++}

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Peak labels toggle: a single peak carrying a name tag (distinct from the mountain-range icon). -->
+<svg width="240" height="240" viewBox="0 0 240 240" version="1.1" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="disc"><circle cx="120" cy="120" r="120"/></clipPath>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#eaf7ff"/><stop offset="1" stop-color="#dcefe4"/>
+    </linearGradient>
+    <linearGradient id="rock" x1="0" y1="70" x2="0" y2="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8a6440"/><stop offset="1" stop-color="#5c3f26"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="120" cy="120" r="120" fill="#ffffff"/>
+  <g clip-path="url(#disc)">
+    <rect x="0" y="0" width="240" height="240" fill="url(#sky)"/>
+
+    <!-- side peaks -->
+    <path d="M-10 210 L60 118 L120 210 Z" fill="#a98763" stroke="#4d3320" stroke-width="2"/>
+    <path d="M120 210 L188 128 L250 210 Z" fill="#a98763" stroke="#4d3320" stroke-width="2"/>
+
+    <!-- main peak -->
+    <path d="M28 214 L120 74 L212 214 Z" fill="url(#rock)" stroke="#3a2716" stroke-width="3"/>
+    <path d="M120 74 L94 114 q26 -12 52 0 z" fill="#ffffff" stroke="#cfe1ea" stroke-width="1.5"/>
+
+    <!-- flagpole + name tag on the summit -->
+    <line x1="120" y1="74" x2="120" y2="34" stroke="#2b333c" stroke-width="5" stroke-linecap="round"/>
+    <rect x="120" y="34" width="70" height="34" rx="5" fill="#ffd23f" stroke="#2b333c" stroke-width="3"/>
+    <g stroke="#2b333c" stroke-width="5" stroke-linecap="round">
+      <line x1="132" y1="46" x2="178" y2="46"/>
+      <line x1="132" y1="57" x2="166" y2="57"/>
+    </g>
+  </g>
+  <circle cx="120" cy="120" r="118.5" fill="none" stroke="#3a2716" stroke-width="3"/>
+</svg>

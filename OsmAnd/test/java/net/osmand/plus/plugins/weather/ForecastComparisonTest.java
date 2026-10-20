@@ -55,6 +55,22 @@ public class ForecastComparisonTest {
         } finally { java.util.TimeZone.setDefault(previous); }
     }
 
+    @Test public void extendedAxisUsesCalendarDaysAcrossDst() {
+        java.util.TimeZone previous = java.util.TimeZone.getDefault();
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"));
+            assertEquals(384, ForecastComparisonValues.timeline(0, 1, 16).size());
+            assertEquals(128, ForecastComparisonValues.timeline(0, 3, 16).size());
+            assertEquals(16, ForecastComparisonValues.timeline(0, 24, 16).size());
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"));
+            long dst = java.time.Instant.parse("2026-11-01T04:00:00Z").toEpochMilli();
+            assertEquals(385, ForecastComparisonValues.timeline(dst, 1, 16).size());
+            assertEquals(25 * 3600000L, ForecastComparisonValues.timeline(dst, 24, 16).get(1) - dst);
+            assertEquals(8, net.osmand.plus.plugins.weather.enums.WeatherSource.ICON.getPointForecastDays());
+            assertEquals(16, net.osmand.plus.plugins.weather.enums.WeatherSource.GFS.getPointForecastDays());
+        } finally { java.util.TimeZone.setDefault(previous); }
+    }
+
     private JSONObject forecast() throws Exception {
         JSONObject root=new JSONObject(),hourly=new JSONObject(),units=new JSONObject();
         JSONArray times=new JSONArray();for(int i=0;i<384;i++)times.put(i*3600);
@@ -86,5 +102,13 @@ public class ForecastComparisonTest {
     private void invalid(JSONObject j) {
         try {OpenForecastData.Companion.parse(j,0);fail("Malformed comparison accepted");}
         catch (Exception expected) { }
+    }
+    @org.junit.Test public void ifsUsesDistinctModelAndExternalLayer() {
+        var source = net.osmand.plus.plugins.weather.enums.WeatherSource.IFS;
+        assertEquals("ecmwf_ifs", OpenForecastData.model(source));
+        assertEquals("ecmwf_ifs025", OpenForecastData.model(net.osmand.plus.plugins.weather.enums.WeatherSource.ECMWF));
+        assertEquals(source, net.osmand.plus.plugins.weather.enums.WeatherSource.Companion.getWeatherSourceBySettingsValue(source.getSettingValue()));
+        assertEquals(15, source.getPointForecastDays());
+        org.junit.Assert.assertTrue(source.isExternal());
     }
 }

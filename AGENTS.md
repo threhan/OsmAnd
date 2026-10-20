@@ -152,3 +152,17 @@ Decided by the agent, not requested explicitly: ...
 ```
 
 *Note: This file is a living document and should be updated as the project evolves.*
+
+## Local-only real track data (user instruction, 2026-10-20)
+
+Real route/track-network data must remain local. Never commit, push, upload as
+release assets, or otherwise publish downloaded, collected, cached or converted
+real-world track datasets (including Letu, 2bulu, phone caches and derived databases).
+Before publishing, inspect the staged files and the destination repository for such
+data. Preserve local originals before removing any accidentally tracked data from
+the remote version. If historical copies exist, report that removing the current
+file does not erase Git history and handle cleanup explicitly.
+Data-format documentation, conversion tools and explicitly synthetic, non-sensitive
+examples are permitted. The existing synthetic-alps examples are artificial fixtures,
+not collected tracks. Keep generated maps, APKs, caches and diagnostics out of source
+commits unless separately requested; real track data stays local regardless.

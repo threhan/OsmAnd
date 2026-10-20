@@ -246,6 +246,10 @@ public class OsmandApplication extends MultiDexApplication {
 
 	@Override
 	public void onCreate() {
+		if (com.peaknav.views.MountainProcess.isCurrent(this)) {
+			super.onCreate();
+			return;
+		}
 		if (RestartActivity.isRestartProcess(this)) {
 			return;
 		}
@@ -418,6 +422,7 @@ public class OsmandApplication extends MultiDexApplication {
 	@Override
 	public void onTerminate() {
 		super.onTerminate();
+		if (com.peaknav.views.MountainProcess.isCurrent(this)) return;
 		if (routingHelper != null) {
 			routingHelper.getVoiceRouter().onApplicationTerminate();
 		}
@@ -579,17 +584,23 @@ public class OsmandApplication extends MultiDexApplication {
 	@Override
 	public void onLowMemory() {
 		super.onLowMemory();
+		if (com.peaknav.views.MountainProcess.isCurrent(this)) return;
 		resourceManager.onLowMemory();
 	}
 
 	@Override
 	public void onTrimMemory(int level) {
 		super.onTrimMemory(level);
+		if (com.peaknav.views.MountainProcess.isCurrent(this)) return;
 		memoryLog.onTrimMemory(level);
 	}
 
 	@Override
 	public void onConfigurationChanged(@NonNull Configuration newConfig) {
+		if (com.peaknav.views.MountainProcess.isCurrent(this)) {
+			super.onConfigurationChanged(newConfig);
+			return;
+		}
 		Resources resources = getResources();
 		resources.updateConfiguration(newConfig, resources.getDisplayMetrics());
 

@@ -125,6 +125,7 @@ public class PluginsHelper {
 		allPlugins.add(new ExternalSensorsPlugin(app));
 		allPlugins.add(new VehicleMetricsPlugin(app));
 		allPlugins.add(new AstronomyPlugin(app));
+		allPlugins.add(new net.osmand.plus.plugins.mountainview.MountainViewPlugin(app));
 		allPlugins.add(new AccessibilityPlugin(app));
 		allPlugins.add(new OsmandDevelopmentPlugin(app));
 

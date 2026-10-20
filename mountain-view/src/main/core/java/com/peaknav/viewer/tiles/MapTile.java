@@ -1,0 +1,841 @@
+package com.peaknav.viewer.tiles;
+
+import static com.peaknav.compatibility.PeakNavAppState.getAppState;
+import static com.peaknav.elevation.ElevationImageAbstract.numVertAttributes;
+import static com.peaknav.elevation.ElevationUtils.getElevationCorrectionForRoundEarth;
+import static com.peaknav.utils.PeakNavUtils.getC;
+
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.Mesh;
+import com.badlogic.gdx.graphics.Pixmap;
+import com.badlogic.gdx.graphics.Texture;
+import com.badlogic.gdx.graphics.g3d.Material;
+import com.badlogic.gdx.graphics.g3d.Model;
+import com.badlogic.gdx.graphics.g3d.ModelInstance;
+import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
+import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
+import com.badlogic.gdx.math.MathUtils;
+
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
+import com.peaknav.elevation.ElevationImageAbstract;
+import com.peaknav.elevation.ElevationImageProvider;
+import com.peaknav.roads.RoadLabelCandidate;
+import com.peaknav.utils.TileAndZoomElevFactor;
+import com.peaknav.utils.TileBoundingBox;
+import com.peaknav.utils.Units;
+import com.peaknav.viewer.render_tiles.PixmapLayerName;
+
+import com.peaknav.geo.BoundingBox;
+import com.peaknav.geo.LatLong;
+import com.peaknav.geo.Tile;
+import com.peaknav.utils.ResourceStats;
+
+public class MapTile {
+
+
+    public static final byte ZOOM_LEVEL_MIN = (byte) 8;
+    public static final byte ZOOM_LEVEL_MAX = (byte) 13;
+    public static final int TILE_SIZE = 256;
+    public final int zoomElevFactor;
+    public final Tile tile;
+    public final Tile tileMinZoom;
+    private final int edgeLength;
+    public transient volatile ElevationImageAbstract elevationImage = null;
+    // public ReentrantReadWriteLock tileLock = new ReentrantReadWriteLock();
+    public final PixmapLayers pixmapLayers;
+    // public boolean[] welded = {false, false, false, false};
+    transient Mesh mesh;
+    public TileBoundingBox tileBoundingBox;
+    public transient Material material;
+    public volatile ModelInstance instance;
+
+    // public transient Texture texture;
+    // public final Pixmap pixmap;
+    public Lock pixmapLock = new ReentrantLock();
+
+    // public final LayerQueueForMapTile layerQueueForMapTile;
+
+    protected Future<?> future;
+    private volatile boolean disposed = false;
+    private final int textureWidth;
+    private final int textureHeight;
+    private volatile boolean roadsSet = false;
+    // private Texture blockSatelliteTexture = null;
+    private final LatLong center;
+    private float[] vertices = null;
+
+    /** Whether a texture of this layer has reached the GPU, as opposed to being drawn empty. */
+    public boolean hasLayerTexture(PixmapLayerName pixmapLayerName) {
+        return textureMap.containsKey(pixmapLayerName);
+    }
+
+    public boolean isLayerDrawn(PixmapLayerName pixmapLayerName) {
+        return textureLayerAdded.contains(pixmapLayerName);
+    }
+
+    public void reassignVertices() {
+        uploadMeshVertices();
+    }
+
+    /** Reused scratch for the sanitised copy sent to the GPU while the skirt is still NaN. */
+    private float[] renderVertices = null;
+
+    // --- Tucking a coarse edge under a finer neighbour -------------------------------------
+    // Edge ids, and for each the axis pushed (0 = x, 1 = y) and the direction of the push.
+    public static final int EDGE_EAST = 0, EDGE_WEST = 1, EDGE_NORTH = 2, EDGE_SOUTH = 3;
+    private static final int[] EDGE_AXIS = {0, 0, 1, 1};
+    private static final float[] EDGE_SIGN = {1f, -1f, 1f, -1f};
+
+    /** Per edge: how far to push it outward, and how far to drop it. Zero means no tuck. */
+    private final float[] tuckPush = new float[4];
+    private final float[] tuckDrop = new float[4];
+    private volatile boolean anyTuck = false;
+
+    /**
+     * Asks that this tile's given edge be tucked under the neighbour across it.
+     *
+     * <p>Where a coarse tile meets a finer one their elevations are welded to exactly the same
+     * heights, yet the boundary is still a single long triangle edge on this side and a chain of
+     * shorter ones on the other. The GPU rasterises the two independently, and rounding leaves
+     * sub-pixel slivers along that T-junction which show as thin sky-coloured lines. Nothing about
+     * the welded heights can fix it — the surfaces already meet.
+     *
+     * <p>So the coarse edge is pushed a little way past the boundary, under the finer tile, and
+     * dropped slightly. The overlap covers the sliver with terrain, and the drop keeps the lip
+     * below the finer surface instead of fighting it for depth.
+     *
+     * <p>Applied only to the copy uploaded to the GPU, never to {@link #vertices}: welding keeps
+     * reading and rewriting the true heights, so repeated welds cannot make the lip creep.
+     */
+    public void requestEdgeTuck(int edge, float push, float drop) {
+        if (edge < 0 || edge >= 4 || push <= 0f) {
+            return;
+        }
+        if (push > tuckPush[edge]) {
+            tuckPush[edge] = push;
+            tuckDrop[edge] = drop;
+        }
+        anyTuck = true;
+    }
+
+    /** Forgets pending tucks; the mesh is about to be rebuilt and neighbours will re-weld. */
+    private void clearEdgeTucks() {
+        java.util.Arrays.fill(tuckPush, 0f);
+        java.util.Arrays.fill(tuckDrop, 0f);
+        anyTuck = false;
+    }
+
+    private void applyEdgeTucks(float[] v) {
+        int w = getWidth();
+        int h = getHeight();
+        for (int edge = 0; edge < 4; edge++) {
+            float push = tuckPush[edge];
+            if (push <= 0f) {
+                continue;
+            }
+            float drop = tuckDrop[edge];
+            int axis = EDGE_AXIS[edge];
+            float delta = EDGE_SIGN[edge] * push;
+            int count = (axis == 0) ? h : w;
+            for (int k = 0; k < count; k++) {
+                int index;
+                switch (edge) {
+                    case EDGE_EAST:  index = k * w + (w - 1); break;
+                    case EDGE_WEST:  index = k * w;           break;
+                    case EDGE_NORTH: index = (h - 1) * w + k; break;
+                    default:         index = k;               break; // EDGE_SOUTH
+                }
+                int s = index * numVertAttributes;
+                if (s + 2 >= v.length) {
+                    continue;
+                }
+                v[s + axis] += delta;
+                v[s + 2] -= drop;
+            }
+        }
+    }
+
+    /**
+     * Uploads the vertices to the GPU, but with any not-yet-welded skirt — the last mesh row and
+     * column, held at {@code NaN} until a neighbour tile fills them — replaced by their nearest
+     * interior neighbour. Welding relies on those {@code NaN} markers in {@link #vertices}, yet the
+     * GPU turns a {@code NaN} position into a black spike (see it over the sea) or a hole at a tile
+     * seam. Sanitising only the uploaded copy keeps welding correct while keeping that garbage off
+     * screen; for flat sea tiles the skirt collapses onto sea level, which is exactly right.
+     */
+    private void uploadMeshVertices() {
+        if (mesh == null || vertices == null) {
+            return;
+        }
+        float[] upload = vertices;
+        boolean tuck = anyTuck;
+        if (hasNanElevation(vertices) || tuck) {
+            // sanitizeSkirt always starts from a fresh copy of the true vertices, so applying the
+            // tuck to its result stays idempotent however often this runs.
+            upload = sanitizeSkirt(vertices);
+            if (tuck) {
+                applyEdgeTucks(upload);
+            }
+        }
+        mesh.setVertices(upload);
+    }
+
+    private static boolean hasNanElevation(float[] v) {
+        for (int i = 2; i < v.length; i += numVertAttributes) {
+            if (Float.isNaN(v[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private float[] sanitizeSkirt(float[] v) {
+        if (renderVertices == null || renderVertices.length != v.length) {
+            renderVertices = new float[v.length];
+        }
+        System.arraycopy(v, 0, renderVertices, 0, v.length);
+
+        int count = v.length / numVertAttributes;
+        // The mesh is square, so the grid width is the root of the vertex count. Deriving it from
+        // the array itself (rather than getWidth()) stays correct whatever the tile's resolution.
+        int width = (int) Math.round(Math.sqrt(count));
+        int last = width - 1;
+        for (int s = 0; s < count; s++) {
+            int dst = s * numVertAttributes;
+            if (!Float.isNaN(renderVertices[dst + 2])) {
+                continue;
+            }
+            int x = s % width;
+            int y = s / width;
+
+            // Step direction from the skirt back into the interior (east and/or north edge).
+            int dx = (x >= last) ? -1 : 0;
+            int dy = (y >= last) ? -1 : 0;
+            int nx = x + dx;
+            int ny = y + dy;
+            int inner1 = (nx + ny * width) * numVertAttributes;
+
+            // Extrapolate the elevation from the two innermost rows so the edge continues the
+            // (round-earth curved) surface rather than repeating the interior height — that keeps
+            // adjacent flat sea tiles meeting flush, so the outline pass finds no false step there.
+            int ix2 = nx + dx;
+            int iy2 = ny + dy;
+            if (ix2 >= 0 && ix2 < width && iy2 >= 0 && iy2 < width) {
+                int inner2 = (ix2 + iy2 * width) * numVertAttributes;
+                renderVertices[dst + 2] = 2f * renderVertices[inner1 + 2] - renderVertices[inner2 + 2];
+            } else {
+                renderVertices[dst + 2] = renderVertices[inner1 + 2];
+            }
+            // The normal only affects shading, so the nearest interior one is plenty.
+            renderVertices[dst + 3] = renderVertices[inner1 + 3];
+            renderVertices[dst + 4] = renderVertices[inner1 + 4];
+            renderVertices[dst + 5] = renderVertices[inner1 + 5];
+        }
+        return renderVertices;
+    }
+
+    public float[] getMapTileVertices() {
+        return vertices;
+    }
+
+    // Never really used, better call ElevationImage.getTileElevationLatitsFromMaxCoords
+    public float getTileElevationLatitsFromMaxCoords2(float lon, float lat) {
+        float x = (float) Units.convertLonitsToLatits(lon, getC().L.getTargetLatitude());
+
+        BoundingBox boundingBox = tileBoundingBox.toBoundingBox();
+
+        float coordStepX = (float) (boundingBox.maxLongitude - boundingBox.minLongitude);
+        float coordStepY = (float) (boundingBox.maxLatitude - boundingBox.minLatitude);
+
+        int rw = (int) ((lon - boundingBox.minLongitude) / coordStepX * edgeLength);
+        int rh = (int) ((lat - boundingBox.minLatitude) / coordStepY * edgeLength);
+
+        float elev = 0;
+        elev += vertices[numVertAttributes*(rw + edgeLength*rh)+ 2];
+        elev += vertices[numVertAttributes*(rw+1 + edgeLength*rh)+ 2];
+        elev += vertices[numVertAttributes*(rw + edgeLength*(rh+1))+ 2];
+        elev += vertices[numVertAttributes*(rw+1 + edgeLength*(rh+1))+ 2];
+        return elev/4;
+    }
+
+    public static class DrawingPair {
+        PixmapLayerName layer;
+        Pixmap pixmap;
+        public DrawingPair(PixmapLayerName layer, Pixmap pixmap) {
+            this.layer = layer;
+            this.pixmap = pixmap;
+        }
+    }
+
+    private final ConcurrentHashMap<PixmapLayerName, Texture> textureMap = new ConcurrentHashMap<>();
+    private final Queue<DrawingPair> texturePixmapMap = new LinkedBlockingQueue<>();
+    /** Added to by the road executor and the two satellite threads at once: a concurrent set. */
+    private final Set<PixmapLayerName> textureLayerAdded =
+            Collections.newSetFromMap(new ConcurrentHashMap<PixmapLayerName, Boolean>());
+
+    // Version of the GPX paths this tile's GPX_PATH texture was drawn for (see GpxTileRasterizer);
+    // -1 means never drawn, so a tile picks the paths up as it loads.
+    public volatile int gpxVersionDrawn = -1;
+    public volatile boolean hasGpxTexture = false;
+
+    /**
+     * Where this tile's roads and trails may have their names written (see RoadNameRenderer),
+     * set when its road layer is drawn. Replaced whole and never modified, so the render thread
+     * reads it without a lock.
+     */
+    public volatile List<RoadLabelCandidate> roadLabels = Collections.emptyList();
+    /** Where this tile's ski runs may have their names written, set when its ski slopes are drawn. */
+    public volatile List<RoadLabelCandidate> pisteLabels = Collections.emptyList();
+    /** Where this tile's ski lifts may have their names written, set with its ski slopes. */
+    public volatile List<RoadLabelCandidate> liftLabels = Collections.emptyList();
+    /** Ground metres per texel of the road distance texture, for the shader's line widths. */
+    private volatile float roadMetersPerTexel = 1f;
+
+
+    public MapTileState getMapTileState() {
+        return mapTileState;
+    }
+
+    public synchronized void setMapTileState(MapTileState mapTileState) {
+        if (this.mapTileState != mapTileState) {
+            STATE_CHANGES.incrementAndGet();
+        }
+        this.mapTileState = mapTileState;
+    }
+
+    /** Counts every change of any tile's state: the welders wait on those (TileBatchRenderer). */
+    private static final java.util.concurrent.atomic.AtomicInteger STATE_CHANGES =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    public static int stateChanges() {
+        return STATE_CHANGES.get();
+    }
+
+    public void setMapTileStateNoData() {
+        setMapTileState(MapTileState.ELEVATION_DATA_NOT_FOUND);
+    }
+
+/*
+    public boolean isNeedsRedrawPixmap() {
+        return needsRedrawPixmap;
+    }
+
+    public void setNeedsRedrawPixmap(boolean needsRedrawPixmap) {
+        this.needsRedrawPixmap = needsRedrawPixmap;
+    }
+
+    public boolean isNeedsRedrawTexture() {
+        return needsRedrawTexture;
+    }
+
+    public void setNeedsRedrawTexture(boolean needsRedrawTexture) {
+        this.needsRedrawTexture = needsRedrawTexture;
+    }
+*/
+
+    public boolean isDisposed() {
+        return disposed;
+    }
+
+    public int getTextureWidth() {
+        return textureWidth;
+    }
+
+    public int getTextureHeight() {
+        return textureHeight;
+    }
+
+    public void renderPixmapsToTextures() {
+        // Requires OpenGL context!
+        while (!texturePixmapMap.isEmpty()) {
+            DrawingPair pair = texturePixmapMap.remove();
+            if (disposed) {
+                // The tile was evicted while this upload sat in the queue. Uploading now
+                // would put a texture into a textureMap that dispose() has already emptied,
+                // so nothing would ever free it.
+                pair.pixmap.dispose();
+                ResourceStats.pixmapsDisposed.incrementAndGet();
+                continue;
+            }
+            // TODO: check if satellite provider has changed...
+            Texture texture = createLayerTexture(pair.layer, pair.pixmap);
+            PixmapLayerName layer = pair.layer;
+            Texture previousTexture = textureMap.get(layer);
+            textureMap.put(layer, texture);
+            if (previousTexture != null) {
+                previousTexture.dispose();
+                ResourceStats.texturesDisposed.incrementAndGet();
+            }
+            pair.pixmap.dispose();
+            ResourceStats.pixmapsDisposed.incrementAndGet();
+            refreshUserData();
+        }
+    }
+
+    /**
+     * Builds the GL texture for one tile layer, choosing the sampling that keeps it sharp on the 3D
+     * terrain.
+     *
+     * <p>The tiles are draped over terrain and almost always seen at a grazing angle, where plain
+     * bilinear filtering aliases into a jagged, shimmering "pixelated" mess — no amount of tile
+     * resolution fixes that, because the problem is minification along the view direction, not a lack
+     * of texels. Mip-maps plus anisotropic filtering are the actual fix: mip-maps supply pre-filtered
+     * lower levels for the minified axis, and anisotropy keeps the other axis crisp so roads do not
+     * turn to mush. Mip-map generation needs a power-of-two texture on GL ES 2 (this app's context),
+     * which is why the road tiles are sized to a power of two; anything non-POT (or the GPX layer)
+     * falls back to the previous filtering.
+     */
+    private Texture createLayerTexture(PixmapLayerName layer, Pixmap pixmap) {
+        // The GPX layer is filtered linearly. It used to be nearest-neighbour because the phase
+        // was a raw 0..1 fraction whose wrap interpolation smeared; it is now stored as a
+        // sine/cosine pair with a soft coverage ramp (see GpxTileRasterizer), both of which
+        // interpolate cleanly, and nearest sampling was what made the path look pixelated up
+        // close. No mip-maps: they would thin the alpha of a line only a few texels wide until it
+        // faded out at distance.
+        // The ski slopes are stored the same way (phase as sine and cosine, a coverage ramp; see
+        // PisteRasterizer) and are filtered the same way.
+        if (layer == PixmapLayerName.GPX_PATH || layer == PixmapLayerName.SKI_SLOPES
+                || layer == PixmapLayerName.SKI_LIFTS) {
+            Texture texture = new Texture(pixmap);
+        ResourceStats.texturesCreated.incrementAndGet();
+            ResourceStats.texturesCreated.incrementAndGet();
+            texture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
+            return texture;
+        }
+        boolean powerOfTwo = MathUtils.isPowerOfTwo(pixmap.getWidth())
+                && MathUtils.isPowerOfTwo(pixmap.getHeight());
+        if (powerOfTwo) {
+            Texture texture = new Texture(pixmap, true); // generate mip-maps
+            ResourceStats.texturesCreated.incrementAndGet();
+            texture.setFilter(Texture.TextureFilter.MipMapLinearLinear,
+                    Texture.TextureFilter.Linear);
+            float maxAniso = Texture.getMaxAnisotropicFilterLevel();
+            if (maxAniso > 1f) {
+                texture.setAnisotropicFilter(Math.min(maxAniso, 8f));
+            }
+            return texture;
+        }
+        Texture texture = new Texture(pixmap);
+        texture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
+        return texture;
+    }
+
+    public void setTexturePixmap(PixmapLayerName layer, Pixmap pixmap) {
+        ResourceStats.pixmapsCreated.incrementAndGet();
+        texturePixmapMap.add(new DrawingPair(layer, pixmap));
+        getC().mapTilePixmapToTexturesHandler.addMapTileToQueue(this);
+        textureLayerAdded.add(layer);
+    }
+
+    /**
+     * Records a layer as drawn when there turned out to be nothing to draw on this tile: no
+     * texture to hold, but no work outstanding either - which is what anything waiting for
+     * "the roads are drawn" needs to hear.
+     */
+    public void setLayerDrawnEmpty(PixmapLayerName layer) {
+        textureLayerAdded.add(layer);
+    }
+
+    public float getRoadMetersPerTexel() {
+        return roadMetersPerTexel;
+    }
+
+    public void setRoadMetersPerTexel(float metersPerTexel) {
+        roadMetersPerTexel = metersPerTexel;
+    }
+
+    public enum MapTileState {
+        ELEVATION_DATA_NOT_LOADED,
+        ELEVATION_DATA_LOADING,
+        CAN_DRAW,
+        IS_DRAWN,
+        ELEVATION_DATA_NOT_FOUND
+    }
+
+    private volatile MapTileState mapTileState;
+    // private volatile boolean needsRedrawTexture = false;
+    // private volatile boolean needsRedrawPixmap = false;
+
+    int numVertices;
+
+    public MapTile(Tile tile) {
+        this(tile, computeZoomElevFactor(tile));
+    }
+
+    public static int computeZoomElevFactor(Tile tile) {
+        return computeZoomElevFactor(tile.zoomLevel);
+    }
+
+    public static int computeZoomElevFactor(int zoomLevel) {
+        // int f = 1 << (tile.zoomLevel - MapTile.ZOOM_LEVEL_MIN);
+        return Math.max(0, 6 - (zoomLevel - MapTile.ZOOM_LEVEL_MIN));
+    }
+
+    /** Mesh vertices along one edge of a tile at this zoom level and elevation factor. */
+    public static int edgeLengthFor(int zoomLevel, int elevFactor) {
+        return 1 + 4096 / (1 << (zoomLevel - ZOOM_LEVEL_MIN)) / (1 << elevFactor);
+    }
+
+    /**
+     * Raises the elevation factor (coarsening the mesh) until it fits in 16-bit element indices.
+     * Enforced here rather than only at the call site because exceeding
+     * {@link ElevationImageAbstract#MAX_MESH_VERTICES} does not fail loudly — the index cast wraps
+     * and the tile renders as torn geometry.
+     */
+    public static int clampElevFactorToIndexLimit(int zoomLevel, int elevFactor) {
+        int factor = Math.max(0, elevFactor);
+        while (factor < 16) {
+            long edge = edgeLengthFor(zoomLevel, factor);
+            if (edge * edge <= ElevationImageAbstract.MAX_MESH_VERTICES) {
+                break;
+            }
+            factor++;
+        }
+        return factor;
+    }
+
+    public MapTile(Tile tile, int zoomElevFactor) {
+        ResourceStats.tilesCreated.incrementAndGet();
+        this.tile = tile;
+        Tile tileMinZoom = tile;
+        while (tileMinZoom.zoomLevel > ZOOM_LEVEL_MIN)
+            tileMinZoom = tileMinZoom.getParent();
+        this.tileMinZoom = tileMinZoom;
+
+        this.zoomElevFactor = clampElevFactorToIndexLimit(tile.zoomLevel, zoomElevFactor);
+        this.edgeLength = edgeLengthFor(tile.zoomLevel, this.zoomElevFactor);
+
+        textureWidth = 1024; // 15 * (getWidth() - 1);
+        textureHeight = 1024; // 15 * (getHeight() - 1);
+
+        tileBoundingBox = new TileBoundingBox(
+                tile.getBoundingBox()
+        );
+
+        center = tile.getBoundingBox().getCenterPoint();
+
+        // TODO: create two materials (roads and satellite)!
+        material = new Material(ColorAttribute.createDiffuse(Color.WHITE));
+
+        setMapTileState(MapTileState.ELEVATION_DATA_NOT_LOADED);
+
+        // elevationImageStorage = new ElevationImageStorage(MapTile.this);
+        pixmapLayers = new PixmapLayers(this);
+    }
+
+    public int getWidth() {
+        return edgeLength;
+    }
+
+    public int getHeight() {
+        return edgeLength;
+    }
+
+    public void prepareMeshData() {
+        clearEdgeTucks(); // a fresh mesh; neighbours re-weld and re-request as needed
+        numVertices = getWidth() * getHeight();
+        int numIndices = (getWidth() - 1) * (getHeight() - 1) * 6;
+        // The tile may already hold a mesh: drawGraphics() runs again every time a neighbour
+        // welds to this tile, and a Mesh owns a vertex and an index buffer on the GPU that
+        // only dispose() frees. Overwriting the field abandoned both - invisible to the heap,
+        // ~185 KB a time, hundreds of times a second while the camera moves.
+        if (mesh != null) {
+            mesh.dispose();
+            ResourceStats.meshesDisposed.incrementAndGet();
+        }
+        mesh = new Mesh(true, numVertices, numIndices, getC().staticData.mapTileVertexAttributes);
+        ResourceStats.meshesCreated.incrementAndGet();
+        mesh.setIndices(elevationImage.getMeshIndices());
+        uploadMeshVertices();
+        buildModelInstance();
+    }
+
+    private float elevationCorrectionForRoundEarth(float[] vertices, int i, final float cLon, final float cLat, float corrForRadius, float dx, float dy) {
+        float longitude = tileBoundingBox.west + dx*vertices[i+6];
+        float latitude = tileBoundingBox.south + dy*(1.0f - vertices[i+7]);
+        return getElevationCorrectionForRoundEarth(latitude, longitude);
+    }
+
+    private void correctForRoundEarth(float[] vertices) {
+        final float cLon = getC().L.getTargetLongitude();
+        final float cLat = getC().L.getTargetLatitude();
+
+        final float corrForRadius = (float) Math.pow(Math.cos(Math.toRadians(cLat)), 2);
+        final float dx = tileBoundingBox.east - tileBoundingBox.west;
+        final float dy = tileBoundingBox.north - tileBoundingBox.south;
+
+        for (int i = 0; i < vertices.length; i += numVertAttributes) {
+            float dz = elevationCorrectionForRoundEarth(vertices, i, cLon, cLat, corrForRadius, dx, dy);
+            vertices[i + 2] -= dz;
+        }
+    }
+
+    public void buildModelInstance() {
+        ModelBuilder modelBuilder = new ModelBuilder();
+        modelBuilder.begin();
+        modelBuilder.part("meshMap", mesh, GL20.GL_TRIANGLES, material);
+        Model modelMesh = modelBuilder.end();
+
+        instance = new ModelInstance(modelMesh, 0, 0, 0);
+        refreshUserData();
+    }
+
+    private void refreshUserData() {
+        if (instance == null)
+            return;
+        instance.userData = new RenderableUserData(this,
+                textureMap.get(PixmapLayerName.BASE_ROADS),
+                textureMap.get(PixmapLayerName.UNDERLAY_LAYER),
+                textureMap.get(PixmapLayerName.GPX_PATH),
+                textureMap.get(PixmapLayerName.ROADS_AUX),
+                roadMetersPerTexel,
+                textureMap.get(PixmapLayerName.SKI_SLOPES),
+                textureMap.get(PixmapLayerName.SKI_LIFTS));
+    }
+
+    public void dispose() {
+        // WARNING: .dispose() should always be called by the main thread!
+        // assert Thread.currentThread().getName().contains("main");
+        if (disposed) {
+            return;
+        }
+        disposed = true;
+        ResourceStats.tilesDisposed.incrementAndGet();
+        if (mesh != null) {
+            mesh.dispose();
+            ResourceStats.meshesDisposed.incrementAndGet();
+            mesh = null;
+        }
+        for (Texture texture : textureMap.values()) {
+            texture.dispose();
+            ResourceStats.texturesDisposed.incrementAndGet();
+        }
+        textureMap.clear();
+        // Pixmaps that were waiting to be uploaded. A tile can be evicted before the render
+        // thread reaches them, and a Pixmap holds its pixels in native memory that the
+        // garbage collector cannot reclaim - the wrapper is small, the buffer is megabytes.
+        DrawingPair pending;
+        while ((pending = texturePixmapMap.poll()) != null) {
+            pending.pixmap.dispose();
+            ResourceStats.pixmapsDisposed.incrementAndGet();
+        }
+        if (material != null) {
+            material = null;
+        }
+        instance = null;
+        pixmapLock.lock();
+        try {
+            if (elevationImage != null) {
+                elevationImage.dispose();
+            }
+            elevationImage = null;
+        } finally {
+            // Was never unlocked: a disposed tile kept its lock for the life of the process.
+            pixmapLock.unlock();
+        }
+    }
+
+    public void addWeldersForTile() {
+        // Add welders to tiles:
+        //  - always if they are larger,
+        //  - to the east and north if they are the same size of the current map tile
+        Tile[] neighbours = {tile.getRight(), tile.getLeft(), tile.getAbove(), tile.getBelow()};
+        for (Tile neighbour : neighbours) {
+            MapTile otherTile = getC().mapTileStorage.getFromMapIndexLessEq(neighbour);
+            if (otherTile == null)
+                continue;
+            getC().weldingQueue.add(new MapTileWelder(this, otherTile));
+        }
+    }
+
+    public void drawGraphics() {
+
+        prepareMeshData();
+
+        addWeldersForTile();
+
+        // blockSatelliteTexture = getSatelliteTextureBlock(getMinZoomTileWithElevFactor());
+
+        setMapTileState(MapTileState.IS_DRAWN);
+        // The labels are checked against the terrain again, now that there is more of it.
+        if (getC().dataRetrieveThreadManager != null) {
+            getC().dataRetrieveThreadManager.terrainDrawn();
+        }
+    }
+
+    public Future<?> submitToExecutor(ElevationImageProvider provider) {
+        provider.incrementReferenceCounter();
+        future = getC().executorEleLoad.submit(() -> {
+            // The count comes down on every way out. A missing elevation file, or anything
+            // thrown below, left it raised: a provider that could never be evicted or disposed.
+            try {
+                if (disposed) {
+                    return;   // replaced while it waited in the queue
+                }
+                // Kept in a local: the render thread sets the field to null when it disposes the
+                // tile, and reading it again below threw NullPointerException here.
+                ElevationImageAbstract image = provider.provideForMapTile(MapTile.this);
+                // elevationImageMesh = elevationImageStorage.retrieveMesh();
+                if (image == null) {
+                    // This probably means the elevation file has not been found:
+                    setMapTileState(MapTileState.ELEVATION_DATA_NOT_FOUND);
+                    return;
+                }
+                pixmapLock.lock();
+                try {
+                    if (disposed) {
+                        // Disposed while the crop was made: nothing will dispose it but this.
+                        image.dispose();
+                        return;
+                    }
+                    elevationImage = image;
+                } finally {
+                    pixmapLock.unlock();
+                }
+                callVertexRetrieval(image);
+                if (tileBoundingBox.toBoundingBox().contains(
+                        getC().L.getTargetLatLong()
+                )) {
+                    float ele = image.getTileElevationLatitsFromMaxCoords(
+                            getC().L.getTargetLongitude(), getC().L.getTargetLatitude());
+                    getC().L.setCurrentTerrainEle(ele);
+                }
+            } catch (IllegalStateException disposedMeanwhile) {
+                if (!disposed) {
+                    throw disposedMeanwhile;
+                }
+            } finally {
+                provider.decrementReferenceCounter();
+            }
+        });
+        return future;
+    }
+
+    public void recomputeNormals() {
+        future = getC().executorEleLoad.submit(() -> {
+            ElevationImageAbstract image = elevationImage;
+            if (image == null || disposed) {
+                return;
+            }
+            image.setVertexNormals(vertices);
+            Gdx.app.postRunnable(this::uploadMeshVertices);
+        });
+    }
+
+    private void callVertexRetrieval(ElevationImageAbstract image) {
+        getAppState().setLastAnyMapTileUpdateTimeToNow();
+
+        // This two are meant to avoid computing vertices and indices on the OpenGL thread:
+        image.getMeshVertices();
+        image.getMeshIndices();
+
+        float[] oldVertices = image.getMeshVertices();
+        if (vertices == null) {
+            vertices = new float[oldVertices.length];
+        }
+        System.arraycopy(oldVertices, 0, vertices, 0, oldVertices.length);
+        correctForRoundEarth(vertices);
+
+        setMapTileState(MapTileState.CAN_DRAW);
+    }
+
+    public LatLong getImpWhiteTileIndex() {
+        return center;
+    }
+
+    /*
+    public void redrawTexture() {
+        assert Thread.currentThread().getName().contains("GLThread");
+        // this.tileLock.writeLock().lock();
+        if (texture != null)
+            texture.dispose();
+        texture = new Texture(pixmap);
+        material = new Material(TextureAttribute.createDiffuse(texture));
+        buildModelInstance();
+        setNeedsRedrawTexture(false);
+    }
+     */
+
+    public static class RenderableUserData {
+        public final MapTile mapTile;
+        public final Texture textureRoads;
+        public final Texture textureSatellite;
+        public final Texture textureGpx;
+        /** The roads' second texture: trail dash phase and difficulties. */
+        public final Texture textureRoadsAux;
+        /** Ground metres per texel of {@link #textureRoads}. */
+        public final float roadMetersPerTexel;
+        /** The ski slopes viewer's runs (see PisteRasterizer); null where the tile has none. */
+        public final Texture texturePistes;
+        /** The ski lifts (see LiftRasterizer); null where the tile has none. */
+        public final Texture textureLifts;
+        // public final Texture textureNormals;
+
+        public RenderableUserData(MapTile mapTile,
+                                  Texture textureRoads,
+                                  Texture textureSatellite,
+                                  Texture textureGpx,
+                                  Texture textureRoadsAux,
+                                  float roadMetersPerTexel,
+                                  Texture texturePistes,
+                                  Texture textureLifts
+                                  ) {
+            this.mapTile = mapTile;
+            this.textureRoads = textureRoads;
+            this.textureSatellite = textureSatellite;
+            this.textureGpx = textureGpx;
+            this.textureRoadsAux = textureRoadsAux;
+            this.roadMetersPerTexel = roadMetersPerTexel;
+            this.texturePistes = texturePistes;
+            this.textureLifts = textureLifts;
+        }
+
+    }
+
+    public Tile getMinZoomTile() {
+        return tileMinZoom;
+        /*
+        Tile ptile = tile;
+        while (ptile.zoomLevel > ZOOM_LEVEL_MIN)
+            ptile = ptile.getParent();
+        return ptile;
+         */
+    }
+
+    public TileAndZoomElevFactor getMinZoomTileWithElevFactor() {
+        return new TileAndZoomElevFactor(getMinZoomTile(), zoomElevFactor);
+    }
+
+    /*
+    In Python, np.fromfile("filename", dtype=np.float32)
+     */
+    public void serializeVerticesToFile(File outputFile) {
+        // Float.SIZE/8, not Float.BYTES: BYTES is Java 8 and absent from RoboVM's runtime.
+        ByteBuffer byteBuffer = ByteBuffer.allocate(vertices.length * (Float.SIZE / 8)).order(ByteOrder.LITTLE_ENDIAN);
+        byteBuffer.asFloatBuffer().put(vertices);
+        try {
+            new DataOutputStream(new FileOutputStream(outputFile)).write(byteBuffer.array());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+}

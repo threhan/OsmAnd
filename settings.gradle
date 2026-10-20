@@ -8,3 +8,5 @@ include ':plugins:Osmand-SRTMPlugin'
 include ':plugins:Osmand-Skimaps'
 
 gradle.ext.java_shared_conf = ''
+
+include ':mountain-view'

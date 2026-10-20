@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Vertical slider knob for the elevation bar: a grabbable pill with up/down chevrons. -->
+<svg width="170" height="256" viewBox="0 0 170 256" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="knob" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6a7686"/>
+      <stop offset="0.5" stop-color="#454f5d"/>
+      <stop offset="1" stop-color="#2b323c"/>
+    </linearGradient>
+  </defs>
+
+  <!-- soft shadow -->
+  <rect x="30" y="16" width="116" height="236" rx="52" fill="#000000" opacity="0.18"/>
+  <!-- knob body -->
+  <rect x="24" y="8" width="116" height="236" rx="52" fill="url(#knob)" stroke="#12181f" stroke-width="5"/>
+  <!-- glossy highlight -->
+  <rect x="40" y="20" width="30" height="212" rx="15" fill="#ffffff" opacity="0.16"/>
+
+  <!-- up chevron -->
+  <path d="M56 66 L82 40 L108 66" fill="none" stroke="#ffffff" stroke-width="10"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- grip lines -->
+  <g stroke="#ffffff" stroke-width="7" stroke-linecap="round" opacity="0.85">
+    <line x1="56" y1="116" x2="108" y2="116"/>
+    <line x1="56" y1="132" x2="108" y2="132"/>
+    <line x1="56" y1="148" x2="108" y2="148"/>
+  </g>
+  <!-- down chevron -->
+  <path d="M56 190 L82 216 L108 190" fill="none" stroke="#ffffff" stroke-width="10"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

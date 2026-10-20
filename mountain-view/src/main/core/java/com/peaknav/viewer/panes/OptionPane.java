@@ -1,0 +1,2367 @@
+package com.peaknav.viewer.panes;
+
+import static com.peaknav.utils.PeakNavUtils.getC;
+import static com.peaknav.utils.PeakNavUtils.getNativeScreenCaller;
+import static com.peaknav.utils.PeakNavUtils.s;
+import static com.peaknav.utils.PreferencesManager.P;
+
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.scenes.scene2d.Actor;
+import com.badlogic.gdx.scenes.scene2d.ui.Button;
+import com.badlogic.gdx.scenes.scene2d.ui.Cell;
+import com.badlogic.gdx.scenes.scene2d.ui.Label;
+import com.badlogic.gdx.scenes.scene2d.ui.ScrollPane;
+import com.badlogic.gdx.scenes.scene2d.ui.Slider;
+import com.badlogic.gdx.scenes.scene2d.ui.Table;
+import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
+import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+import com.peaknav.viewer.MapApp;
+import com.peaknav.viewer.MapViewerSingleton;
+import com.peaknav.viewer.widgets.MarqueeLabel;
+import com.peaknav.viewer.widgets.WidgetGetter;
+import static com.peaknav.viewer.widgets.WidgetGetter.ImageTextButtonOptionPane;
+
+import static com.peaknav.utils.PreferencesManager.UnitSystem.IMPERIAL;
+import static com.peaknav.utils.PreferencesManager.UnitSystem.METRIC;
+import static com.peaknav.viewer.imgmapprovider.SatelliteImageProvider.SatelliteProviderOptions;
+
+import com.peaknav.compatibility.NativeScreenCaller;
+import com.peaknav.network.DownloadProvider;
+import com.peaknav.roads.RoadStyle;
+import com.peaknav.ui.TextFieldsCallback;
+import com.peaknav.viewer.imgmapprovider.SatelliteImageProvider;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class OptionPane {
+
+    private final MapApp mapApp;
+    private final Table table;
+    private final Table tableOneColumn;
+
+    private final ExecutorService changer = Executors.newSingleThreadExecutor();
+
+    // TODO: maybe replace with getC().widgetTextures.getUniformDrawable(Color.BLACK); ?
+    private final Button optionsButton;
+    private final float widgetUnitStep;
+    private final Table selectBoxSatSrc;
+    private final Table selectInfoOpts;
+    /** The languages to choose from: one column that scrolls, whatever the screen's shape. */
+    private Table selectLanguage;
+    private Table selectStorage;
+    private ImageTextButtonOptionPane buttonArchives, buttonImagery, buttonAllData;
+    private com.badlogic.gdx.scenes.scene2d.ui.ScrollPane languageScroll;
+    private Cell<com.badlogic.gdx.scenes.scene2d.ui.ScrollPane> languageScrollCell;
+    private Table languageList;
+    /** The menus laid out twice, for a screen held sideways and one held upright. */
+    private OrientedMenu mainMenu, labelsMenu, roadsMenu;
+    private ImageTextButtonOptionPane buttonLanguage;
+    private final List<TextButton> languageButtons = new ArrayList<>();
+    private final List<String> languageCodes = new ArrayList<>();
+    private final Table selectGpx;
+    /** "My paths and markers": the GPX paths' submenu and the markers'. */
+    private final Table selectPathsAndMarkers;
+    /** The markers' submenu; its list of markers is rebuilt every time it opens. */
+    private final Table selectMarkers;
+    private final Table markersList = new Table();
+    private com.badlogic.gdx.scenes.scene2d.ui.ScrollPane markersScroll;
+    private final Table selectLabels;
+    /** The same submenu in one column, for a screen held upright; see createLabelsMenu. */
+    private final Table selectLabelsOneColumn;
+    private final Table selectSky;
+    private final Table selectCompass;
+    /** The roads submenu, laid out in pairs for a wide screen and in one column for a tall one. */
+    private final Table selectRoads;
+    private final Table selectRoadsOneColumn;
+    /** Between the main menu and the roads' own submenu: roads and paths, and ski pistes. */
+    private final Table selectRoadsGroup;
+    /** The ski pistes' submenu: their names. */
+    private final Table selectPistes;
+    /** Re-read the road style into the roads submenus' swatches and sliders when one opens. */
+    private final List<Runnable> roadMenuRefreshers = new ArrayList<>();
+    private final float buttonWidth;
+    private final float height;
+    private final float padHeight;
+    private final float roundButtonSize;
+    /** Share of a row taken by a custom source's delete button; reserved on every row. */
+    private static final float REMOVE_BUTTON_WIDTH_FRACTION = 0.18f;
+    /** The source list scrolls rather than growing past this share of the screen height. */
+    private static final float MAX_PROVIDER_LIST_SCREEN_FRACTION = 0.55f;
+    /** Scrollbar width, and the gap between it and the buttons, relative to a round button. */
+    private static final float SCROLLBAR_WIDTH_FRACTION = 0.55f;
+    private static final float SCROLLBAR_GAP_FRACTION = 0.35f;
+    private static final Color SCROLLBAR_TRACK_COLOR = new Color(1f, 1f, 1f, 0.30f);
+    private static final Color SCROLLBAR_KNOB_COLOR = new Color(0.25f, 0.25f, 0.25f, 0.9f);
+
+    /** Keyed by provider id, since custom providers are not enum constants. */
+    private final Map<String, TextButton> selectBoxSatSrcMap = new LinkedHashMap<>();
+
+/*
+    public Table getTableAppInfo() {
+        return tableAppInfo;
+    }
+    */
+
+    // private final Table tableAppInfo;
+
+    public Table getSelectBoxUnits() {
+        return selectBoxUnits;
+    }
+
+    public Table getSelectLanguage() {
+        return selectLanguage;
+    }
+
+    public Table getSelectStorage() {
+        return selectStorage;
+    }
+
+    public Table getSelectInfoOpts() {
+        return selectInfoOpts;
+    }
+
+    public Table getSelectBoxDownloadSource() {
+        return selectBoxDownloadSrc;
+    }
+
+    private final Table selectBoxUnits;
+    private final Table selectBoxDownloadSrc;
+
+    public OptionPane(Button optionsButton, float widgetUnitStep) {
+        this.optionsButton = optionsButton;
+        this.widgetUnitStep = widgetUnitStep;
+        mapApp = MapViewerSingleton.getAppInstance();
+
+        roundButtonSize = widgetUnitStep / 2f;
+        padHeight = 0.2f*roundButtonSize;
+        height = 2f*roundButtonSize;
+        buttonWidth = 6.0f*widgetUnitStep;
+
+        selectBoxSatSrc = createSatelliteSourceSelectBox();
+        selectBoxDownloadSrc = createDownloadSourceSelectBox();
+        selectBoxUnits = createSelectBoxUnitSystem();
+        selectInfoOpts = createInfoOptsMenu();
+        selectLanguage = createLanguageMenu();
+        selectStorage = createStorageMenu();
+        selectGpx = createGpxMenu();
+        selectMarkers = createMarkersMenu();
+        selectPathsAndMarkers = createPathsAndMarkersMenu();
+        selectLabels = createLabelsMenu(false);
+        selectLabelsOneColumn = createLabelsMenu(true);
+        selectSky = createSkyMenu();
+        selectCompass = createCompassMenu();
+        selectRoads = createRoadsMenu(false);
+        selectRoadsOneColumn = createRoadsMenu(true);
+        selectPistes = createPistesMenu();
+        selectRoadsGroup = createRoadsGroupMenu();
+        // tableAppInfo = createTableAppInfo();
+        table = getPreferencesTable(false);
+        tableOneColumn = getPreferencesTable(true);
+
+        selectBoxSatSrc.center();
+        table.center();
+        tableOneColumn.center();
+
+        table.setVisible(false);
+        tableOneColumn.setVisible(false);
+
+        mainMenu = new OrientedMenu(table, tableOneColumn, this::updateCheckingStates);
+        labelsMenu = new OrientedMenu(selectLabels, selectLabelsOneColumn, this::updateCheckingStates);
+        roadsMenu = new OrientedMenu(selectRoads, selectRoadsOneColumn, () -> {
+            for (Runnable refresher : roadMenuRefreshers) {
+                refresher.run();
+            }
+        });
+    }
+
+    /**
+     * The screen turned or the window changed shape: each menu on show takes the layout that
+     * now fits, and the language list the height that now fits.
+     */
+    public void onResize() {
+        mainMenu.fit();
+        labelsMenu.fit();
+        roadsMenu.fit();
+        if (selectLanguage.isVisible()) {
+            fitLanguageList();
+        }
+        // Sized from the screen's height when built or opened, as the language list was: turned
+        // with one open, a list ran off the screen with the buttons around it.
+        if (selectMarkers.isVisible()) {
+            rebuildMarkersList();
+        }
+        populateSatelliteSourceSelectBox(selectBoxSatSrc);
+        populateDownloadSourceSelectBox(selectBoxDownloadSrc);
+    }
+
+    /*
+    private Table createTableAppInfo() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        Table container = new Table();
+
+        Label.LabelStyle labelStyle = getC().styleSingleton.getLabelStyle();
+        for (int i = 0; i < 20; i++) {
+            Label labelAppInfo = new Label(
+                    String.format("App Info %d", i),
+                    labelStyle);
+            labelAppInfo.setWrap(false);
+            container.add(labelAppInfo).width(widgetUnitStep*5).row();
+        }
+
+        ScrollPane.ScrollPaneStyle scrollPaneStyle = new ScrollPane.ScrollPaneStyle();
+        scrollPaneStyle.vScroll = getC().widgetTextures.getTextureRegionDrawable("icons/icon_back.png");
+        scrollPaneStyle.vScrollKnob = getC().widgetTextures.getTextureRegionDrawable("icons/icon_back.png");
+        ScrollPane scrollPane = new ScrollPane(container, scrollPaneStyle);
+        scrollPane.setScrollingDisabled(false, true);
+        scrollPane.setFadeScrollBars(false);
+        scrollPane.setScrollbarsOnTop(true);
+        scrollPane.setScrollBarPositions(true, true);
+
+        scrollPane.setSize(Gdx.graphics.getWidth() * 0.9f, Gdx.graphics.getHeight() * 0.9f);
+        scrollPane.setTouchable(Touchable.enabled);
+
+        table.add(scrollPane).expand().fill().width(Gdx.graphics.getWidth()*0.8f).height(Gdx.graphics.getHeight()*0.8f).row();
+
+        List<Table> buttons = new LinkedList<>();
+
+        ImageTextButtonOptionPane back = getImageTextButton("icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true);
+        table.setVisible(false);
+        return table;
+    }
+    */
+
+    public Table getTableOneColumn() {
+        return tableOneColumn;
+    }
+
+    public boolean isVisible() {
+        return table.isVisible() || tableOneColumn.isVisible();
+    }
+
+    /**
+     * The system Back key, from a platform that has one, while a menu is open: exactly what that
+     * menu's own Back button does - a submenu back to the menu it came from, the main menu
+     * closed - by pressing it. Render thread. False when no menu is open.
+     */
+    public boolean pressBack() {
+        for (Table menu : allMenus()) {
+            if (menu != null && menu.isVisible()) {
+                Button back = findBackButton(menu, s("Back"));
+                if (back != null) {
+                    ChangeListener.ChangeEvent event = new ChangeListener.ChangeEvent();
+                    back.fire(event);
+                } else {
+                    hide();
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A menu's Back button: the one named so, else the first whose caption reads "Back". By the
+     * caption alone, a marker or an imagery source named exactly the translated word - listed
+     * before Back in its menu - was pressed instead: the app flew to the marker or chose the
+     * source.
+     */
+    private static Button findBackButton(com.badlogic.gdx.scenes.scene2d.Group group, String caption) {
+        Actor named = group.findActor(WidgetGetter.BACK_BUTTON_NAME);
+        if (named instanceof Button) {
+            return (Button) named;
+        }
+        return findBackButtonByCaption(group, caption);
+    }
+
+    private static Button findBackButtonByCaption(com.badlogic.gdx.scenes.scene2d.Group group, String caption) {
+        for (Actor child : group.getChildren()) {
+            if (child instanceof TextButton && caption.equals(String.valueOf(((TextButton) child).getText()))) {
+                return (Button) child;
+            }
+            if (child instanceof com.badlogic.gdx.scenes.scene2d.ui.ImageTextButton
+                    && caption.equals(String.valueOf(((com.badlogic.gdx.scenes.scene2d.ui.ImageTextButton) child).getText()))) {
+                return (Button) child;
+            }
+            if (child instanceof com.badlogic.gdx.scenes.scene2d.Group) {
+                Button found = findBackButtonByCaption((com.badlogic.gdx.scenes.scene2d.Group) child, caption);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Table[] allMenus() {
+        return new Table[]{table, tableOneColumn, getSelectBoxSatelliteSource(), getSelectBoxDownloadSource(),
+                getSelectBoxUnits(), getSelectInfoOpts(), getSelectLanguage(), getSelectStorage(), getSelectGpx(), getSelectPathsAndMarkers(),
+                getSelectMarkers(), getSelectLabels(), getSelectLabelsOneColumn(), getSelectSky(), getSelectCompass(), getSelectRoads(),
+                getSelectRoadsOneColumn(), getSelectRoadsGroup(), getSelectPistes()};
+    }
+
+    /** Whether the options menu, or any of its submenus, is on screen. */
+    public boolean isAnyMenuVisible() {
+        Table[] menus = {table, tableOneColumn, getSelectBoxSatelliteSource(), getSelectBoxDownloadSource(),
+                getSelectBoxUnits(), getSelectInfoOpts(), getSelectLanguage(), getSelectStorage(), getSelectGpx(), getSelectPathsAndMarkers(),
+                getSelectMarkers(), getSelectLabels(), getSelectLabelsOneColumn(), getSelectSky(), getSelectCompass(), getSelectRoads(),
+                getSelectRoadsOneColumn(), getSelectRoadsGroup(), getSelectPistes()};
+        for (Table menu : menus) {
+            if (menu != null && menu.isVisible()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public Table getSelectBoxSatelliteSource() {
+        return selectBoxSatSrc;
+    }
+
+    public Table getSelectPathsAndMarkers() {
+        return selectPathsAndMarkers;
+    }
+
+    public Table getSelectMarkers() {
+        return selectMarkers;
+    }
+
+    public Table getSelectGpx() {
+        return selectGpx;
+    }
+
+    public Table getSelectLabels() {
+        return selectLabels;
+    }
+
+    public Table getSelectLabelsOneColumn() {
+        return selectLabelsOneColumn;
+    }
+
+    public Table getSelectSky() {
+        return selectSky;
+    }
+
+    public Table getSelectCompass() {
+        return selectCompass;
+    }
+
+    public Table getSelectRoads() {
+        return selectRoads;
+    }
+
+    public Table getSelectRoadsOneColumn() {
+        return selectRoadsOneColumn;
+    }
+
+    public Table getSelectRoadsGroup() {
+        return selectRoadsGroup;
+    }
+
+    public Table getSelectPistes() {
+        return selectPistes;
+    }
+
+    /* private Table createSatelliteSourceSelectBox2() {
+
+        Array<String> options = new Array<>();
+        options.add("Option 1");
+        options.add("Option 2");
+        options.add("Option 3");
+
+        ListStyle listStyle = new ListStyle();
+        listStyle.font = getC().styleSingleton.getBitmapFontSmall();
+        listStyle.fontColorSelected = Color.BLUE; // Set selected item color
+        listStyle.fontColorUnselected = Color.WHITE; // Set unselected item color
+        listStyle.selection = getUniformColor(Color.BROWN);
+
+        ScrollPane.ScrollPaneStyle scrollPaneStyle = new ScrollPane.ScrollPaneStyle();
+        scrollPaneStyle.vScroll = getUniformColor(Color.BLACK);
+
+        SelectBox.SelectBoxStyle selectBoxStyle = new SelectBox.SelectBoxStyle();
+
+        selectBoxStyle.font = getC().styleSingleton.getBitmapFontSmall();
+        selectBoxStyle.fontColor = Color.WHITE; // Set font color
+        selectBoxStyle.background = getC().widgetTextures.getUniformDrawable(Color.BLUE); // Set background color
+        selectBoxStyle.scrollStyle = scrollPaneStyle;
+        selectBoxStyle.listStyle = listStyle;
+        selectBoxStyle.backgroundOpen = getC().widgetTextures.getUniformDrawable(Color.LIGHT_GRAY); // Set background color when open
+
+        // Create SelectBox
+        SelectBox<String> selectBox = new SelectBox<>(selectBoxStyle);
+        selectBox.setItems(options);
+
+        // Set position and size
+        // selectBox.setPosition(100, 100);
+        // selectBox.setSize(200, 50);
+
+        Table table = new Table();
+        table.setFillParent(true);
+        table.center();
+        table.add(selectBox).width(Gdx.graphics.getWidth()*0.6f)
+                .height(Gdx.graphics.getHeight()*0.6f);
+        table.setVisible(true);
+
+        return table;
+    }
+     */
+
+    private volatile TextButton prevChecked = null;
+
+    private Table createGpxMenu() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        float buttonWidth = this.buttonWidth * 1.2f;
+        List<Table> buttons = new ArrayList<>(8);
+
+        ImageTextButtonOptionPane buttonFile = getC().widgetGetter.getImageTextButton(
+                "icons/icon_map.png", s("Load_gpx_file"), false);
+        buttonFile.addClickListener(() -> {
+            getNativeScreenCaller().pickGpxFile();
+            hide();
+        });
+        buttons.add(buttonFile);
+
+        ImageTextButtonOptionPane buttonUrl = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_download_data.png", s("Load_gpx_url"), false);
+        buttonUrl.addClickListener(() -> {
+            getNativeScreenCaller().promptForTextFields(
+                    s("Load_gpx_url"), s("Gpx_url_prompt"),
+                    new String[]{"URL"}, new String[]{""},
+                    new com.peaknav.ui.TextFieldsCallback() {
+                        @Override
+                        public void onEntered(String[] values) {
+                            if (values != null && values.length > 0) {
+                                getC().gpxManager.loadFromUrl(values[0]);
+                            }
+                        }
+
+                        @Override
+                        public void onCancelled() {
+                        }
+                    });
+            hide();
+        });
+        buttons.add(buttonUrl);
+
+        // Reliable way to launch the cinematic tour, in addition to the on-map camera button that
+        // appears once a track is loaded.
+        ImageTextButtonOptionPane buttonFly = getC().widgetGetter.getImageTextButton(
+                "icons/icon_gpx_play.png", s("Gpx_flyover"), false);
+        buttonFly.addClickListener(() -> {
+            if (!getC().gpxManager.isEmpty()) {
+                getC().getMapViewerScreen().startGpxFlythrough();
+                hide();
+            }
+        });
+        buttons.add(buttonFly);
+
+        ImageTextButtonOptionPane buttonClear = getC().widgetGetter.getImageTextButton(
+                "icons/icon_x.png", s("Clear_gpx"), false);
+        buttonClear.addClickListener(() -> {
+            getC().getMapViewerScreen().stopGpxFlythrough(); // don't keep touring a cleared track
+            getC().gpxManager.clear();
+        });
+        buttons.add(buttonClear);
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            selectPathsAndMarkers.setVisible(true);
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true, buttonWidth);
+        table.setVisible(false);
+        return table;
+    }
+
+    /** "My paths and markers": two entries, the GPX paths' submenu and the markers'. */
+    private Table createPathsAndMarkersMenu() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+        float buttonWidth = this.buttonWidth * 1.2f;
+        List<Table> buttons = new ArrayList<>(3);
+
+        ImageTextButtonOptionPane buttonGpx = getC().widgetGetter.getImageTextButton(
+                "icons/icon_map.png", s("Gpx_paths"), false);
+        buttonGpx.addClickListener(() -> {
+            table.setVisible(false);
+            selectGpx.setVisible(true);
+        });
+        buttons.add(buttonGpx);
+
+        ImageTextButtonOptionPane buttonMarkers = getC().widgetGetter.getImageTextButton(
+                "icons/icon_marker_add.png", s("Markers_menu"), false);
+        buttonMarkers.addClickListener(() -> {
+            table.setVisible(false);
+            showMarkersMenu();
+        });
+        buttons.add(buttonMarkers);
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true, buttonWidth);
+        table.setVisible(false);
+        return table;
+    }
+
+    /**
+     * The markers: whether their flags are shown, one button for each - which turns the view to it,
+     * or takes it there - then sharing them all as a GPX file and deleting them all. The list is
+     * built afresh on opening, and scrolls when there are more than the screen holds.
+     */
+    private Table createMarkersMenu() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+        float buttonWidth = this.buttonWidth * 1.2f;
+
+        ImageTextButtonOptionPane checkBoxShow = getC().widgetGetter.getImageTextButton(
+                "icons/icon_marker_add.png", s("Markers_show"), true);
+        addCheckingStateProperty(checkBoxShow, () -> P.isShowMarkers());
+        checkBoxShow.addClickListener(() -> changer.execute(() -> P.setShowMarkers(checkBoxShow.isChecked())));
+
+        markersScroll = new com.badlogic.gdx.scenes.scene2d.ui.ScrollPane(markersList);
+        markersScroll.setScrollingDisabled(true, false);
+        markersScroll.setOverscroll(false, false);
+
+        ImageTextButtonOptionPane buttonShare = getC().widgetGetter.getImageTextButton(
+                "icons/icon_gpx_share.png", s("Markers_share"), false);
+        buttonShare.addClickListener(() -> {
+            if (!getC().markerStore.getMarkers().isEmpty()) {
+                // With its extension, as every other shared track's name has it: without, the phones
+                // shared a file with no type, which apps that know GPX by its name did not offer to open.
+                getNativeScreenCaller().shareGpx("PeakNav_markers.gpx", getC().markerStore.toGpxText());
+                hide();
+            }
+        });
+
+        ImageTextButtonOptionPane buttonDeleteAll = getC().widgetGetter.getImageTextButton(
+                "icons/icon_x.png", s("Markers_delete_all"), false);
+        buttonDeleteAll.addClickListener(() -> {
+            if (getC().markerStore.getMarkers().isEmpty()) {
+                return;
+            }
+            getNativeScreenCaller().promptYesNo(s("Markers_delete_all"), s("Markers_delete_all_prompt"),
+                    () -> Gdx.app.postRunnable(() -> {
+                        getC().markerStore.clear();
+                        rebuildMarkersList();
+                    }));
+        });
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            selectPathsAndMarkers.setVisible(true);
+        });
+
+        table.add(checkBoxShow).width(buttonWidth).height(height).padBottom(padHeight).row();
+        table.add(markersScroll).width(buttonWidth).padBottom(padHeight).row();
+        table.add(buttonShare).width(buttonWidth).height(height).padBottom(padHeight).row();
+        table.add(buttonDeleteAll).width(buttonWidth).height(height).padBottom(padHeight).row();
+        table.add(back).width(buttonWidth).height(height);
+        table.setVisible(false);
+        return table;
+    }
+
+    /** Opens the markers' submenu on the markers as they are now. */
+    private void showMarkersMenu() {
+        updateCheckingStates();
+        rebuildMarkersList();
+        selectMarkers.setVisible(true);
+    }
+
+    /** One button per marker, or a line saying there are none. */
+    private void rebuildMarkersList() {
+        float buttonWidth = this.buttonWidth * 1.2f;
+        markersList.clearChildren();
+        List<com.peaknav.markers.Marker> markers = getC().markerStore.getMarkers();
+        if (markers.isEmpty()) {
+            com.badlogic.gdx.scenes.scene2d.ui.Label none = new com.badlogic.gdx.scenes.scene2d.ui.Label(
+                    s("Markers_none"), getC().styleSingleton.getLabelStyle());
+            none.setWrap(true);
+            none.setAlignment(com.badlogic.gdx.utils.Align.center);
+            markersList.add(none).width(buttonWidth).pad(padHeight);
+        } else {
+            for (final com.peaknav.markers.Marker marker : markers) {
+                ImageTextButtonOptionPane button = getC().widgetGetter.getImageTextButton(
+                        "icons/icon_marker_flag.png", marker.name, false);
+                button.addClickListener(() -> {
+                    hide();
+                    getC().getMapViewerScreen().goToMarker(marker);
+                });
+                markersList.add(button).width(buttonWidth).height(height).padBottom(padHeight).row();
+            }
+        }
+        // Room for the buttons around the list; the list scrolls in what is left.
+        float stageHeight = selectMarkers.getStage() != null ? selectMarkers.getStage().getHeight() : Gdx.graphics.getHeight();
+        float room = Math.max(height + padHeight, stageHeight - 4 * (height + padHeight) - 2 * height);
+        selectMarkers.getCell(markersScroll).height(Math.min(room, markersList.getPrefHeight()));
+        selectMarkers.invalidateHierarchy();
+        markersScroll.setScrollY(0);
+    }
+
+    /**
+     * Submenu that toggles which labels are shown: the POI labels (peaks, places, alpine huts) and
+     * the ranged-area labels (islands, cities, mountain ranges, lakes).
+     */
+    private Table createLabelsMenu(boolean oneColumn) {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        List<Table> buttons = new ArrayList<>(10);
+
+        ImageTextButtonOptionPane checkBoxShowPeaks = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_peak_names.png", s("Peak_names"), true);
+        addCheckingStateProperty(checkBoxShowPeaks, () -> P.isPeakVisible());
+        checkBoxShowPeaks.addClickListener(() ->
+                changer.execute(() -> P.setPeakVisible(checkBoxShowPeaks.isChecked())));
+        buttons.add(checkBoxShowPeaks);
+
+        ImageTextButtonOptionPane checkBoxShowPlaces = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_place_names.png", s("Place_names"), true);
+        addCheckingStateProperty(checkBoxShowPlaces, () -> P.isVisiblePlaceNames());
+        checkBoxShowPlaces.addClickListener(() ->
+                changer.execute(() -> P.setVisiblePlaceNames(checkBoxShowPlaces.isChecked())));
+        buttons.add(checkBoxShowPlaces);
+
+        ImageTextButtonOptionPane checkBoxShowAlpineHuts = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_alpine_huts.png", s("Alpine_huts"), true);
+        addCheckingStateProperty(checkBoxShowAlpineHuts, () -> P.isVisibleAlpineHuts());
+        checkBoxShowAlpineHuts.addClickListener(() ->
+                changer.execute(() -> P.setVisibleAlpineHuts(checkBoxShowAlpineHuts.isChecked())));
+        buttons.add(checkBoxShowAlpineHuts);
+
+        ImageTextButtonOptionPane checkBoxShowIslands = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_islands.png", s("Islands_label"), true);
+        addCheckingStateProperty(checkBoxShowIslands, () -> P.isVisibleIslands());
+        checkBoxShowIslands.addClickListener(() ->
+                changer.execute(() -> P.setVisibleIslands(checkBoxShowIslands.isChecked())));
+        buttons.add(checkBoxShowIslands);
+
+        ImageTextButtonOptionPane checkBoxShowCities = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_large_towns.png", s("Cities_label"), true);
+        addCheckingStateProperty(checkBoxShowCities, () -> P.isVisibleCities());
+        checkBoxShowCities.addClickListener(() ->
+                changer.execute(() -> P.setVisibleCities(checkBoxShowCities.isChecked())));
+        buttons.add(checkBoxShowCities);
+
+        ImageTextButtonOptionPane checkBoxShowRanges = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_mountain_ranges.png", s("Mountain_ranges_label"), true);
+        addCheckingStateProperty(checkBoxShowRanges, () -> P.isVisibleMountainRanges());
+        checkBoxShowRanges.addClickListener(() ->
+                changer.execute(() -> P.setVisibleMountainRanges(checkBoxShowRanges.isChecked())));
+        buttons.add(checkBoxShowRanges);
+
+        ImageTextButtonOptionPane checkBoxShowLakes = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_lakes.png", s("Lakes_label"), true);
+        addCheckingStateProperty(checkBoxShowLakes, () -> P.isVisibleLakes());
+        checkBoxShowLakes.addClickListener(() ->
+                changer.execute(() -> P.setVisibleLakes(checkBoxShowLakes.isChecked())));
+        buttons.add(checkBoxShowLakes);
+
+        // Street, track and trail names, written along their ways (see RoadNameRenderer).
+        ImageTextButtonOptionPane checkBoxRoadNames = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_roads.png", s("Road_names"), true);
+        addCheckingStateProperty(checkBoxRoadNames, () -> P.getRoadStyle().isRoadNames());
+        checkBoxRoadNames.addClickListener(() -> changer.execute(() -> {
+            P.getRoadStyle().setRoadNames(checkBoxRoadNames.isChecked());
+            P.persistRoadStyle();
+        }));
+        buttons.add(checkBoxRoadNames);
+
+        // The size of every label's text: with the labels it sizes, not in the main menu.
+        ImageTextButtonOptionPane checkBoxLargeFonts = getC().widgetGetter.getImageTextButton("icons/icon_checkbox_large_fonts.png", s("Large_fonts"), true);
+        addCheckingStateProperty(checkBoxLargeFonts, ()->P.getViewLargeFonts());
+        checkBoxLargeFonts.addClickListener(() -> changer.execute(() -> {
+            P.setViewLargeFonts(checkBoxLargeFonts.isChecked());
+            getC().O.iterateOverVisiblePoisUnstoppable(poiObject -> poiObject.drawLabel.updateLabelPolygonCoordinates());
+            // And placed again, as after a change of units: every label has changed size, and
+            // which ones hide each other was still the answer for the other size.
+            getC().dataRetrieveThreadManager.triggerUpdateVisibilityLabelOverlap();
+        }));
+        buttons.add(checkBoxLargeFonts);
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, oneColumn, buttonWidth);
+        table.setVisible(false);
+        return table;
+    }
+
+    /** Label for the sky-mode cycle button: 0 = local time, 1 = day, 2 = night (see PreferencesManager). */
+    private String skyModeLabel() {
+        String mode;
+        switch (P.getSkyMode()) {
+            case 1: mode = s("Sky_mode_day"); break;
+            case 2: mode = s("Sky_mode_night"); break;
+            default: mode = s("Sky_mode_local"); break;
+        }
+        return s("Sky_mode") + ": " + mode;
+    }
+
+    private Table createSkyMenu() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        List<Table> buttons = new ArrayList<>(5);
+
+        // Sky mode: cycles local time / forced day / forced night.
+        ImageTextButtonOptionPane buttonSkyMode = getC().widgetGetter.getImageTextButton(
+                "icons/icon_sky_mode.png", skyModeLabel(), false);
+        buttonSkyMode.addClickListener(() -> {
+            P.setSkyMode(P.getSkyMode() + 1);
+            buttonSkyMode.getLabel().setText(skyModeLabel());
+            P.setSkyView(true); // touching a sky option turns the sky on
+        });
+        buttons.add(buttonSkyMode);
+
+        // Custom time: opens the native date/time picker (or reset to the device clock).
+        ImageTextButtonOptionPane buttonSkyTime = getC().widgetGetter.getImageTextButton(
+                "icons/icon_sky_time.png", s("Sky_time"), false);
+        buttonSkyTime.addClickListener(() -> {
+            P.setSkyView(true); // setting a custom sky time turns the sky on
+            hide();
+            getNativeScreenCaller().chooseSkyTime();
+        });
+        buttons.add(buttonSkyTime);
+
+        ImageTextButtonOptionPane checkBoxConstellations = getC().widgetGetter.getImageTextButton(
+                "icons/icon_sky_constellations.png", s("Sky_constellations"), true);
+        addCheckingStateProperty(checkBoxConstellations, () -> P.isSkyConstellations());
+        checkBoxConstellations.addClickListener(() ->
+                changer.execute(() -> {
+                    P.setSkyConstellations(checkBoxConstellations.isChecked());
+                    P.setSkyView(true); // touching a sky option turns the sky on
+                }));
+        buttons.add(checkBoxConstellations);
+
+        // Sits directly under the constellations, because it governs their names as well as
+        // everything else written on the sky.
+        ImageTextButtonOptionPane checkBoxSkyLabels = getC().widgetGetter.getImageTextButton(
+                "icons/icon_sky_labels.png", s("Sky_labels"), true);
+        addCheckingStateProperty(checkBoxSkyLabels, () -> P.isSkyLabels());
+        checkBoxSkyLabels.addClickListener(() ->
+                changer.execute(() -> {
+                    P.setSkyLabels(checkBoxSkyLabels.isChecked());
+                    P.setSkyView(true); // touching a sky option turns the sky on
+                }));
+        buttons.add(checkBoxSkyLabels);
+
+        ImageTextButtonOptionPane checkBoxSkyGrid = getC().widgetGetter.getImageTextButton(
+                "icons/icon_sky_grid.png", s("Sky_grid"), true);
+        addCheckingStateProperty(checkBoxSkyGrid, () -> P.isSkyGrid());
+        checkBoxSkyGrid.addClickListener(() ->
+                changer.execute(() -> {
+                    P.setSkyGrid(checkBoxSkyGrid.isChecked());
+                    P.setSkyView(true); // touching a sky option turns the sky on
+                }));
+        buttons.add(checkBoxSkyGrid);
+
+        ImageTextButtonOptionPane checkBoxEcliptic = getC().widgetGetter.getImageTextButton(
+                "icons/icon_sky_ecliptic.png", s("Sky_ecliptic"), true);
+        addCheckingStateProperty(checkBoxEcliptic, () -> P.isSkyEcliptic());
+        checkBoxEcliptic.addClickListener(() ->
+                changer.execute(() -> {
+                    P.setSkyEcliptic(checkBoxEcliptic.isChecked());
+                    P.setSkyView(true);
+                }));
+        buttons.add(checkBoxEcliptic);
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true, buttonWidth);
+        table.setVisible(false);
+        return table;
+    }
+
+    private Table createCompassMenu() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        List<Table> buttons = new ArrayList<>(4);
+
+        // Touching any option turns the whole group on, exactly as the sky submenu
+        // turns the sky on - an adjustment you can see beats one silently ignored
+        // because the master switch was off.
+
+        ImageTextButtonOptionPane checkBoxCoordinates = getC().widgetGetter.getImageTextButton(
+                "icons/icon_loc_pin.png", s("Show_coordinates"), true);
+        addCheckingStateProperty(checkBoxCoordinates, () -> P.isShowCoordinates());
+        checkBoxCoordinates.addClickListener(() -> changer.execute(() -> {
+            P.setShowCoordinates(checkBoxCoordinates.isChecked());
+            P.setCompassLocation(true);
+        }));
+        buttons.add(checkBoxCoordinates);
+
+        ImageTextButtonOptionPane checkBoxElevation = getC().widgetGetter.getImageTextButton(
+                "icons/icon_elevation_readout.png", s("Show_elevation"), true);
+        addCheckingStateProperty(checkBoxElevation, () -> P.isShowElevation());
+        checkBoxElevation.addClickListener(() -> changer.execute(() -> {
+            P.setShowElevation(checkBoxElevation.isChecked());
+            P.setCompassLocation(true);
+        }));
+        buttons.add(checkBoxElevation);
+
+        ImageTextButtonOptionPane checkBoxHorizon = getC().widgetGetter.getImageTextButton(
+                "icons/icon_compass_horizon.png", s("Horizon_compass"), true);
+        addCheckingStateProperty(checkBoxHorizon, () -> P.isHorizonCompass());
+        checkBoxHorizon.addClickListener(() -> changer.execute(() -> {
+            P.setHorizonCompass(checkBoxHorizon.isChecked());
+            P.setCompassLocation(true);
+        }));
+        buttons.add(checkBoxHorizon);
+
+        ImageTextButtonOptionPane checkBoxCorner = getC().widgetGetter.getImageTextButton(
+                "icons/icon_compass_corner.png", s("Corner_compass"), true);
+        addCheckingStateProperty(checkBoxCorner, () -> P.isCornerCompass());
+        checkBoxCorner.addClickListener(() -> changer.execute(() -> {
+            P.setCornerCompass(checkBoxCorner.isChecked());
+            P.setCompassLocation(true);
+        }));
+        buttons.add(checkBoxCorner);
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true, buttonWidth);
+        table.setVisible(false);
+        return table;
+    }
+
+    /** The i18n key naming each road-style colour in the roads submenu. */
+    private static String swatchLabelKey(RoadStyle.Swatch swatch) {
+        switch (swatch) {
+            case ROADS: return "Road_color_roads";
+            case TRACKS: return "Road_color_tracks";
+            case TRAILS_EASY: return "Road_color_trails_easy";
+            case TRAILS_MOUNTAIN: return "Road_color_trails_mountain";
+            default: return "Road_color_trails_alpine";
+        }
+    }
+
+    /** Shows a colour as the button's icon: a plain square of it. */
+    private void showSwatch(ImageTextButtonOptionPane button, int rgba8888) {
+        TextureRegionDrawable swatch = getC().widgetTextures.getUniformDrawable(new Color(rgba8888));
+        swatch.setMinWidth(0.7f * widgetUnitStep);
+        swatch.setMinHeight(0.7f * widgetUnitStep);
+        button.getStyle().imageUp = swatch;
+        button.getStyle().imageDown = swatch;
+        button.getStyle().imageChecked = swatch;
+    }
+
+    /** What a slider in the roads submenu does with its value. */
+    private interface SliderChange {
+        /** @param settled true once the finger has let go: the moment to save */
+        void changed(float value, boolean settled);
+    }
+
+    /** The slider look of the photo bar: the same knob and track, so the two read as one family. */
+    private Slider.SliderStyle menuSliderStyle(float knobSize) {
+        Slider.SliderStyle style = new Slider.SliderStyle();
+        TextureRegionDrawable knob = getC().widgetTextures.getTextureRegionDrawable("icons/icon_slider_alpha.png");
+        knob.setMinWidth(knobSize);
+        knob.setMinHeight(knobSize);
+        style.knob = knob;
+        style.background = getC().widgetTextures.getNinePatchDrawable("icons/slider_nine_patch.png");
+        return style;
+    }
+
+    /** A menu row with a label on the left and a slider filling the rest, on a button's white. */
+    private Table sliderRow(String text, float min, float max, float step, float sliderWidth,
+                            final Slider[] out, final SliderChange onChange) {
+        Table row = new Table();
+        row.setBackground(getC().widgetTextures.getUniformDrawable(Color.WHITE));
+        // A name longer than the room beside the slider slides rather than pushing the row wider.
+        Label label = new MarqueeLabel(text, new Label.LabelStyle(getC().styleSingleton.getBitmapFontSmall(), Color.BLACK));
+        final Slider slider = new Slider(min, max, step, false, menuSliderStyle(0.8f * height));
+        slider.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                onChange.changed(slider.getValue(), !slider.isDragging());
+            }
+        });
+        row.add(label).left().padLeft(0.3f * widgetUnitStep).expandX().fillX();
+        row.add(slider).width(sliderWidth).height(0.8f * height).padLeft(0.2f * widgetUnitStep)
+                .padRight(0.3f * widgetUnitStep);
+        out[0] = slider;
+        return row;
+    }
+
+    /**
+     * A slider in half a menu row, its name as a small caption above it. Beside the slider there
+     * would be no room for "Lunghezza tratteggio" or "Beschriftungsdichte" in half a row; above
+     * it the name has the cell's whole width.
+     */
+    private Table sliderCell(String text, float min, float max, float step, final Slider[] out,
+                             final SliderChange onChange) {
+        Table cell = new Table();
+        cell.setBackground(getC().widgetTextures.getUniformDrawable(Color.WHITE));
+        Label label = new MarqueeLabel(text, new Label.LabelStyle(getC().styleSingleton.getBitmapFontVerySmallDark(), Color.BLACK));
+        final Slider slider = new Slider(min, max, step, false, menuSliderStyle(0.5f * height));
+        slider.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                onChange.changed(slider.getValue(), !slider.isDragging());
+            }
+        });
+        cell.add(label).left().fillX().padLeft(0.3f * widgetUnitStep).padRight(0.3f * widgetUnitStep).row();
+        cell.add(slider).expandX().fillX().height(0.5f * height)
+                .padLeft(0.3f * widgetUnitStep).padRight(0.3f * widgetUnitStep);
+        out[0] = slider;
+        return cell;
+    }
+
+    /** A full-width slider row in one column, or a captioned half-row cell in pairs. */
+    private Table sliderControl(boolean oneColumn, String text, float min, float max, float step,
+                                float sliderWidth, Slider[] out, SliderChange onChange) {
+        return oneColumn ? sliderRow(text, min, max, step, sliderWidth, out, onChange)
+                : sliderCell(text, min, max, step, out, onChange);
+    }
+
+    /**
+     * How the roads and trails look: a colour for each kind of way - tap one to step through the
+     * palette - the length of the trail dashes and how fast they move, how often names and
+     * numbers are written along them and whether they are written at all. Every change shows on the next frame, because the terrain shader reads the style every
+     * frame; nothing is redrawn, and each change is saved as it is made.
+     *
+     * <p>Built twice, like the main menu: in pairs for a screen held sideways - six rows, the
+     * sliders in half-row cells with their names above them - and in one column for a screen
+     * held upright.
+     */
+    private Table createRoadsMenu(boolean oneColumn) {
+        final Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        List<Table> swatches = new ArrayList<>(5);
+        for (final RoadStyle.Swatch swatch : RoadStyle.Swatch.values()) {
+            final ImageTextButtonOptionPane button = getC().widgetGetter.getImageTextButton(
+                    null, s(swatchLabelKey(swatch)), false);
+            showSwatch(button, P.getRoadStyle().color(swatch));
+            button.addClickListener(() -> {
+                showSwatch(button, P.getRoadStyle().cycleColor(swatch));
+                changer.execute(P::persistRoadStyle);
+            });
+            roadMenuRefreshers.add(() -> showSwatch(button, P.getRoadStyle().color(swatch)));
+            swatches.add(button);
+        }
+
+        // Dash length, short on the left: a slider over the dash count, reversed, so dragging
+        // right lengthens the dashes rather than multiplying them.
+        // Upright, half the row: the rest is the name's, which slides when it is longer still.
+        float sliderWidth = oneColumn ? buttonWidth * 0.5f : buttonWidth * 1.3f;
+        final Slider[] dashLength = new Slider[1];
+        Table dashLengthRow = sliderControl(oneColumn, s("Road_dash_length"), RoadStyle.DASH_COUNT_MIN,
+                RoadStyle.DASH_COUNT_MAX, 1f, sliderWidth, dashLength, (value, settled) -> {
+                    P.getRoadStyle().setDashCount(RoadStyle.DASH_COUNT_MIN + RoadStyle.DASH_COUNT_MAX
+                            - Math.round(value));
+                    if (settled) {
+                        changer.execute(P::persistRoadStyle);
+                    }
+                });
+        roadMenuRefreshers.add(() -> dashLength[0].setValue(RoadStyle.DASH_COUNT_MIN
+                + RoadStyle.DASH_COUNT_MAX - P.getRoadStyle().dashCount()));
+
+        // Dash animation: still at the left end.
+        final Slider[] dashSpeed = new Slider[1];
+        Table dashSpeedRow = sliderControl(oneColumn, s("Road_dash_animation"), 0f, RoadStyle.DASH_SPEED_MAX, 0.05f,
+                sliderWidth, dashSpeed, (value, settled) -> {
+                    P.getRoadStyle().setDashSpeed(value);
+                    if (settled) {
+                        changer.execute(P::persistRoadStyle);
+                    }
+                });
+        roadMenuRefreshers.add(() -> dashSpeed[0].setValue(P.getRoadStyle().dashSpeed()));
+
+
+        // Road and trail names on or off: the same setting as in the Labels submenu.
+        final ImageTextButtonOptionPane checkBoxNames = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_roads.png", s("Road_names"), true);
+        addCheckingStateProperty(checkBoxNames, () -> P.getRoadStyle().isRoadNames());
+        checkBoxNames.addClickListener(() -> changer.execute(() -> {
+            P.getRoadStyle().setRoadNames(checkBoxNames.isChecked());
+            P.persistRoadStyle();
+        }));
+        roadMenuRefreshers.add(() -> checkBoxNames.setChecked(P.getRoadStyle().isRoadNames()));
+
+        // How often names and numbers are written: fewer on the left, more on the right.
+        final Slider[] labelFrequency = new Slider[1];
+        Table labelFrequencyRow = sliderControl(oneColumn, s("Road_label_frequency"), RoadStyle.LABEL_FREQUENCY_MIN,
+                RoadStyle.LABEL_FREQUENCY_MAX, 1f, sliderWidth, labelFrequency, (value, settled) -> {
+                    P.getRoadStyle().setLabelFrequency(Math.round(value));
+                    if (settled) {
+                        changer.execute(P::persistRoadStyle);
+                    }
+                });
+        roadMenuRefreshers.add(() -> labelFrequency[0].setValue(P.getRoadStyle().labelFrequency()));
+
+        ImageTextButtonOptionPane buttonReset = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_roads.png", s("Road_style_reset"), false);
+        buttonReset.addClickListener(() -> {
+            RoadStyle style = P.getRoadStyle();
+            style.resetColors();
+            style.setDashCount(RoadStyle.DASH_COUNT_DEFAULT);
+            style.setDashSpeed(RoadStyle.DASH_SPEED_DEFAULT);
+            style.setLabelFrequency(RoadStyle.LABEL_FREQUENCY_DEFAULT);
+            for (Runnable refresher : roadMenuRefreshers) {
+                refresher.run();
+            }
+            changer.execute(P::persistRoadStyle);
+        });
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            openRoadsGroup(); // one level up
+        });
+
+        if (oneColumn) {
+            List<Table> rows = new ArrayList<>(swatches);
+            rows.add(dashLengthRow);
+            rows.add(dashSpeedRow);
+            rows.add(labelFrequencyRow);
+            rows.add(checkBoxNames);
+            rows.add(buttonReset);
+            rows.add(back);
+            addButtonsToTable(table, rows, true, buttonWidth * 1.2f);
+        } else {
+            addPair(table, swatches.get(0), swatches.get(1));
+            addPair(table, swatches.get(2), swatches.get(3));
+            addSingle(table, swatches.get(4));
+            // Six rows, as tall as the main options menu: any taller and it runs under the
+            // camera and compass buttons at the top of a phone held sideways.
+            addPair(table, dashLengthRow, dashSpeedRow);
+            addPair(table, labelFrequencyRow, checkBoxNames);
+            // Back goes in the left column, as in every two-column menu (see addButtonsToTable).
+            addPair(table, back, buttonReset);
+        }
+
+        for (Runnable refresher : roadMenuRefreshers) {
+            refresher.run();
+        }
+        table.setVisible(false);
+        return table;
+    }
+
+    /** Roads and paths on or off: where there is no map data, offers to download it; and starts drawing. */
+    private void applyRoadsVisible(boolean checked) {
+        P.setViewerLayerVisibleBaseRoads(checked);
+        if (checked) {
+            boolean missingData = getC().checkMissingData.checkMissingDataForCoord(
+                    getC().L.getCurrentLatitude(), getC().L.getCurrentLongitude());
+            if (missingData) {
+                getNativeScreenCaller().askForDownloadScreen(
+                        getC().L.getCurrentLatitude(), getC().L.getCurrentLongitude()
+                );
+            }
+            getC().tileManager.startAerialAndDataRenderExecutors();
+        }
+    }
+
+    /**
+     * The main menu's "Trails & pistes" switch: everything its submenu holds at once - roads and
+     * paths, the ski runs and the lifts. The row is named for the group, so switching it off has
+     * to leave nothing of the group drawn; it used to turn off the roads alone and leave the
+     * pistes and the lifts on the map.
+     */
+    private void applyRoutesGroupVisible(boolean checked) {
+        P.setPisteVisible(checked);
+        P.setLiftsVisible(checked);
+        applyRoadsVisible(checked);   // last: it is the one that offers the download and redraws
+    }
+
+    /** Opens the Roads "..." submenu from the main menu, as its "..." does; for scripts and tests. */
+    public void openRoadsSubmenu() {
+        table.setVisible(false);
+        tableOneColumn.setVisible(false);
+        openRoadsGroup();
+    }
+
+    /** Opens the ski pistes' own "..." submenu, as its "..." does; for scripts and tests. */
+    public void openPistesSubmenu() {
+        openRoadsSubmenu();
+        selectRoadsGroup.setVisible(false);
+        selectPistes.setVisible(true);
+    }
+
+    /** Opens the roads and paths' own "..." submenu (colours, dashes, names); for scripts and tests. */
+    public void openRoadsStyleSubmenu() {
+        openRoadsSubmenu();
+        selectRoadsGroup.setVisible(false);
+        roadsMenu.show();
+    }
+
+    /** Shows the roads and pistes submenu, with its switches as they stand. */
+    private void openRoadsGroup() {
+        for (Runnable refresher : roadMenuRefreshers) {
+            refresher.run();
+        }
+        selectRoads.setVisible(false);
+        selectRoadsOneColumn.setVisible(false);
+        selectPistes.setVisible(false);
+        selectRoadsGroup.setVisible(true);
+    }
+
+    /** A switch with a "..." beside it, as the main menu's composite rows are laid out. */
+    private Table switchWithMore(Table switchButton, Runnable more) {
+        Table row = new Table();
+        row.add(switchButton).width(buttonWidth * 0.8f);
+        TextButton buttonMore = getC().widgetGetter.getTextButton("...", false);
+        buttonMore.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                more.run();
+            }
+        });
+        row.add(buttonMore).width(buttonWidth * 0.2f).height(height);
+        return row;
+    }
+
+    /**
+     * The main menu's Roads "..." submenu: roads and paths on or off, with a "..." for their
+     * colours, dashes and names; the ski pistes on or off, with a "..." for their names; and Back
+     * to the main menu.
+     */
+    private Table createRoadsGroupMenu() {
+        final Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        final ImageTextButtonOptionPane checkBoxRoads = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_roads.png", s("Base_Roads"), true);
+        checkBoxRoads.addClickListener(() -> changer.execute(() -> applyRoadsVisible(checkBoxRoads.isChecked())));
+        checkBoxRoads.setProgrammaticChangeEvents(false);
+        roadMenuRefreshers.add(() -> checkBoxRoads.setChecked(P.isViewerLayerVisibleBaseRoads()));
+        Table roadsRow = switchWithMore(checkBoxRoads, () -> {
+            for (Runnable refresher : roadMenuRefreshers) {
+                refresher.run();
+            }
+            roadsMenu.show();
+            table.setVisible(false);
+        });
+
+        // The ski slopes viewer: runs from the piste data, coloured by difficulty and flowing downhill.
+        final ImageTextButtonOptionPane checkBoxPistes = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_ski.png", s("Ski_pistes"), true);
+        checkBoxPistes.addClickListener(() -> changer.execute(() -> {
+            boolean checked = checkBoxPistes.isChecked();
+            P.setPisteVisible(checked);
+            if (checked) {
+                getC().tileManager.startAerialAndDataRenderExecutors();
+            }
+        }));
+        checkBoxPistes.setProgrammaticChangeEvents(false);
+        roadMenuRefreshers.add(() -> checkBoxPistes.setChecked(P.isSkiSlopesVisible()));
+        Table pistesRow = switchWithMore(checkBoxPistes, () -> {
+            for (Runnable refresher : roadMenuRefreshers) {
+                refresher.run();
+            }
+            selectPistes.setVisible(true);
+            table.setVisible(false);
+        });
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+
+        List<Table> rows = new ArrayList<>();
+        rows.add(roadsRow);
+        rows.add(pistesRow);
+        rows.add(back);
+        addButtonsToTable(table, rows, true);
+        table.setVisible(false);
+        return table;
+    }
+
+    /** The ski pistes' "..." submenu: the runs' names, the lifts and their names, and Back. */
+    private Table createPistesMenu() {
+        final Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        final ImageTextButtonOptionPane checkBoxNames = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_ski.png", s("Ski_piste_names"), true);
+        checkBoxNames.addClickListener(() -> changer.execute(
+                () -> P.setPisteLabelsVisible(checkBoxNames.isChecked())));
+        checkBoxNames.setProgrammaticChangeEvents(false);
+        roadMenuRefreshers.add(() -> checkBoxNames.setChecked(P.isPisteLabelsVisible()));
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            openRoadsGroup(); // one level up
+        });
+
+        // The lifts: cables with their cabins, chairs and handles moving uphill, and their names.
+        final ImageTextButtonOptionPane checkBoxLifts = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_lifts.png", s("Ski_lifts"), true);
+        checkBoxLifts.addClickListener(() -> changer.execute(() -> {
+            boolean checked = checkBoxLifts.isChecked();
+            P.setLiftsVisible(checked);
+            if (checked) {
+                getC().tileManager.startAerialAndDataRenderExecutors();
+            }
+        }));
+        checkBoxLifts.setProgrammaticChangeEvents(false);
+        roadMenuRefreshers.add(() -> checkBoxLifts.setChecked(P.isLiftsVisible()));
+
+        final ImageTextButtonOptionPane checkBoxLiftNames = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_lifts.png", s("Ski_lift_names"), true);
+        checkBoxLiftNames.addClickListener(() -> changer.execute(
+                () -> P.setLiftLabelsVisible(checkBoxLiftNames.isChecked())));
+        checkBoxLiftNames.setProgrammaticChangeEvents(false);
+        roadMenuRefreshers.add(() -> checkBoxLiftNames.setChecked(P.isLiftLabelsVisible()));
+
+        List<Table> rows = new ArrayList<>();
+        rows.add(checkBoxNames);
+        rows.add(checkBoxLifts);
+        rows.add(checkBoxLiftNames);
+        rows.add(back);
+        addButtonsToTable(table, rows, true);
+        table.setVisible(false);
+        return table;
+    }
+
+    /** Two menu buttons side by side, as the main menu lays them out on a wide screen. */
+    private void addPair(Table table, Table left, Table right) {
+        table.add(left).width(buttonWidth).height(height).padBottom(padHeight)
+                .padRight(0.2f * roundButtonSize);
+        table.add(right).width(buttonWidth).height(height).padBottom(padHeight).row();
+    }
+
+    /** One menu button alone in its row, centred under a pair. */
+    private void addSingle(Table table, Table only) {
+        table.add(only).colspan(2).width(buttonWidth).height(height).padBottom(padHeight).row();
+    }
+
+    private Table createInfoOptsMenu() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        float buttonWidth = this.buttonWidth * 1.2f;
+
+        List<Table> buttons = new ArrayList<>(16);
+
+        ImageTextButtonOptionPane buttonAppInfo = getC().widgetGetter.getImageTextButton(
+                "icons/icon_info.png", s("App_info"), false);
+        buttonAppInfo.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                // tableAppInfo.setVisible(true);
+                getNativeScreenCaller().openAppInfoScreen();
+                hide();
+            }
+        });
+        buttons.add(buttonAppInfo);
+
+        // The pictures of what the app does, the ones a first download is spent watching.
+        ImageTextButtonOptionPane buttonSlideshow = getC().widgetGetter.getImageTextButton(
+                "icons/icon_gallery.png", s("Slideshow"), false);
+        buttonSlideshow.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                com.peaknav.viewer.screens.MapViewerScreen screen = getC().getMapViewerScreen();
+                if (screen != null && screen.slideShowOverlay != null) {
+                    screen.slideShowOverlay.show();
+                }
+                hide();
+            }
+        });
+        buttons.add(buttonSlideshow);
+
+        // The interface's language: the device's unless the reader picks another.
+        buttonLanguage = getC().widgetGetter.getImageTextButton(
+                "icons/icon_language.png", languageCaption(), false);
+        buttonLanguage.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                table.setVisible(false);
+                selectLanguage.setVisible(true);
+                fitLanguageList();
+            }
+        });
+        buttons.add(buttonLanguage);
+
+        // What the downloads take of the device, and the ways to give it back.
+        ImageTextButtonOptionPane buttonStorage = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_download_data2.png", s("Storage"), false);
+        buttonStorage.addClickListener(() -> {
+            table.setVisible(false);
+            selectStorage.setVisible(true);
+            measureStorage();
+        });
+        buttons.add(buttonStorage);
+
+        WidgetGetter.ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton("icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true, buttonWidth);
+        table.setVisible(false);
+        return table;
+    }
+
+    /**
+     * Storage: what the downloads take of the device, each kind with its size, and a press
+     * to delete it after a question. The archives are kept after they are unpacked, so that a
+     * block asked for again is not fetched again; on a phone they take nearly as much again as
+     * the data. The imagery is fetched again as it is looked at. The map data can go block by
+     * block, chosen on the map, or all at once.
+     */
+    private Table createStorageMenu() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+        float buttonWidth = this.buttonWidth * 1.35f;
+        List<Table> buttons = new ArrayList<>(8);
+
+        buttonArchives = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_download_data.png", s("Storage_archives"), false);
+        buttonArchives.addClickListener(() -> askToDelete("Storage_archives_prompt",
+                data -> data.deleteArchives(), false));
+        buttons.add(buttonArchives);
+
+        buttonImagery = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_satellite.png", s("Storage_imagery"), false);
+        buttonImagery.addClickListener(() -> askToDelete("Storage_imagery_prompt",
+                data -> data.deleteImagery(), false));
+        buttons.add(buttonImagery);
+
+        ImageTextButtonOptionPane buttonAreas = getC().widgetGetter.getImageTextButton(
+                "icons/icon_map.png", s("Storage_areas"), false);
+        buttonAreas.addClickListener(() -> {
+            hide();
+            com.peaknav.viewer.mapscreens.MapScreens.openDeleteChooser();
+        });
+        buttons.add(buttonAreas);
+
+        buttonAllData = getC().widgetGetter.getImageTextButton(
+                "icons/icon_x.png", s("Storage_all"), false);
+        buttonAllData.addClickListener(() -> askToDelete("Storage_all_prompt",
+                data -> data.deleteAll(), true));
+        buttons.add(buttonAllData);
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton(
+                "icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            selectInfoOpts.setVisible(true);
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true, buttonWidth);
+        table.setVisible(false);
+        return table;
+    }
+
+    private interface Deletion {
+        long of(com.peaknav.database.DownloadedData data);
+    }
+
+    /** Measured off the render thread - the folders hold thousands of files - and shown on it. */
+    private void measureStorage() {
+        final int generation = ++storageMeasure;
+        // Counting takes seconds where much is downloaded - some thousands of files - and the
+        // buttons had only their names meanwhile, as if there were nothing to count. Each one
+        // counts dots until its own size is known, and shows it as soon as it is.
+        measuring(buttonArchives, "Storage_archives");
+        measuring(buttonImagery, "Storage_imagery");
+        measuring(buttonAllData, "Storage_all");
+        getC().submitExecutorGeneric(() -> {
+            com.peaknav.database.DownloadedData data = com.peaknav.database.DownloadedData.ofTheApp();
+            measured(generation, buttonArchives, "Storage_archives", data.archivesBytes());
+            measured(generation, buttonImagery, "Storage_imagery", data.imageryBytes());
+            measured(generation, buttonAllData, "Storage_all", data.mapDataBytes());
+        });
+    }
+
+    /** Distinguishes the latest measurement from one still counting when the menu was opened again. */
+    private int storageMeasure;
+
+    /** The caption with dots that count up while the size is being measured. Render thread. */
+    private static void measuring(final ImageTextButtonOptionPane button, final String key) {
+        final String name = s(key) + ": ";
+        final String[] frames = {"\u2022", "\u2022 \u2022", "\u2022 \u2022 \u2022", "\u2022 \u2022"};
+        final int[] frame = {0};
+        button.clearActions();
+        button.setText(name + frames[0]);
+        button.addAction(com.badlogic.gdx.scenes.scene2d.actions.Actions.forever(
+                com.badlogic.gdx.scenes.scene2d.actions.Actions.sequence(
+                        com.badlogic.gdx.scenes.scene2d.actions.Actions.delay(0.3f),
+                        com.badlogic.gdx.scenes.scene2d.actions.Actions.run(() -> {
+                            frame[0] = (frame[0] + 1) % frames.length;
+                            button.setText(name + frames[frame[0]]);
+                        }))));
+    }
+
+    /** One size known: the dots stop and the size takes their place. Any thread. */
+    private void measured(final int generation, final ImageTextButtonOptionPane button,
+                          final String key, final long bytes) {
+        final String size = com.peaknav.database.DownloadedData.readable(bytes);
+        Gdx.app.postRunnable(() -> {
+            if (generation != storageMeasure) {
+                return;   // a newer count is running, with its own dots
+            }
+            button.clearActions();
+            button.setText(s(key) + ": " + size);
+        });
+    }
+
+    /**
+     * Asks, deletes on a yes, says how much was freed and measures again.
+     *
+     * @param mapData whether map data goes, which the app holds in memory and must drop
+     */
+    private void askToDelete(String question, Deletion deletion, boolean mapData) {
+        if (com.peaknav.compatibility.PeakNavAppState.getAppState().isMapDataDownloadStarted()) {
+            // Not under a download's feet: it is writing into the folders this would empty.
+            getNativeScreenCaller().makeToast(s("Download_in_progress"));
+            return;
+        }
+        getNativeScreenCaller().promptYesNo("", s(question), () ->
+                getC().submitExecutorGeneric(() -> {
+                    long freed = deletion.of(com.peaknav.database.DownloadedData.ofTheApp());
+                    if (mapData) {
+                        com.peaknav.database.DownloadedData.tellTheApp();
+                    }
+                    getNativeScreenCaller().makeToast(s("Storage_freed") + " "
+                            + com.peaknav.database.DownloadedData.readable(freed));
+                    measureStorage();
+                }));
+    }
+
+    /** "Language: Italiano", or "Language: System language" while the device's is followed. */
+    private static String languageCaption() {
+        String chosen = P.getLanguage();
+        String name = chosen.isEmpty() ? null : com.peaknav.viewer.I18NWrapper.nameOf(chosen);
+        return s("Language") + ": " + (name != null ? name : s("Language_system"));
+    }
+
+    /**
+     * The languages to choose from, each under its own name, the device's language first, in
+     * one column that scrolls: two dozen of them fit no screen, and more will come. The choice
+     * is saved at once and used from the next start: every caption of the interface is laid
+     * out when the app starts.
+     */
+    private Table createLanguageMenu() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        languageList = new Table();
+        List<String[]> choices = new ArrayList<>();
+        choices.add(new String[]{"", s("Language_system")});
+        for (String[] language : com.peaknav.viewer.I18NWrapper.LANGUAGES) {
+            choices.add(language);
+        }
+        for (String[] entry : choices) {
+            final String code = entry[0];
+            final TextButton choice = getC().widgetGetter.getTextButton(entry[1], true);
+            choice.setProgrammaticChangeEvents(false);
+            choice.setChecked(code.equals(P.getLanguage()));
+            choice.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    chooseLanguage(code);
+                }
+            });
+            languageButtons.add(choice);
+            languageCodes.add(code);
+            languageList.add(choice).width(buttonWidth).height(height).padBottom(padHeight).padRight(padHeight).row();
+        }
+        // A bar down the side, always shown, so it is plain there is more below: a list that
+        // scrolls without one looks like a list that ends where the screen does. Blue on white,
+        // the menu icons' colours, wide enough to be seen against the map behind it.
+        com.badlogic.gdx.scenes.scene2d.ui.ScrollPane.ScrollPaneStyle scrollStyle =
+                new com.badlogic.gdx.scenes.scene2d.ui.ScrollPane.ScrollPaneStyle();
+        float barWidth = Math.max(6f, 0.2f * widgetUnitStep);
+        com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable knob =
+                new com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable(getC().widgetTextures
+                        .getUniformDrawable(new com.badlogic.gdx.graphics.Color(0.17f, 0.50f, 0.72f, 1f)));
+        knob.setMinWidth(barWidth);
+        knob.setMinHeight(2f * barWidth);
+        com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable track =
+                new com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable(getC().widgetTextures
+                        .getUniformDrawable(new com.badlogic.gdx.graphics.Color(1f, 1f, 1f, 0.9f)));
+        track.setMinWidth(barWidth);
+        scrollStyle.vScrollKnob = knob;
+        scrollStyle.vScroll = track;
+        languageScroll = new com.badlogic.gdx.scenes.scene2d.ui.ScrollPane(languageList, scrollStyle);
+        languageScroll.setScrollingDisabled(true, false);
+        languageScroll.setOverscroll(false, false);
+        languageScroll.setFadeScrollBars(false);
+        languageScroll.setScrollbarsOnTop(false);
+        languageScrollCell = table.add(languageScroll).width(buttonWidth + barWidth + padHeight);
+        table.row();
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton("icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            selectInfoOpts.setVisible(true);
+        });
+        table.add(back).width(buttonWidth).height(height).padTop(padHeight);
+        table.setVisible(false);
+        return table;
+    }
+
+    /**
+     * The list as tall as the screen allows beside its Back button, or as its languages need if
+     * less; scrolled to the one chosen, so it is in view when the list opens.
+     */
+    private void fitLanguageList() {
+        float room = Gdx.graphics.getHeight() * 0.8f - height - 3 * padHeight;
+        languageScrollCell.height(Math.max(height, Math.min(languageList.getPrefHeight(), room)));
+        selectLanguage.invalidateHierarchy();
+        selectLanguage.validate();
+        for (int i = 0; i < languageButtons.size(); i++) {
+            if (languageButtons.get(i).isChecked()) {
+                TextButton chosen = languageButtons.get(i);
+                languageScroll.layout();
+                languageScroll.scrollTo(chosen.getX(), chosen.getY(), chosen.getWidth(), chosen.getHeight(), true, true);
+                languageScroll.updateVisualScroll();
+                break;
+            }
+        }
+    }
+
+    private void chooseLanguage(String code) {
+        for (int i = 0; i < languageButtons.size(); i++) {
+            languageButtons.get(i).setChecked(languageCodes.get(i).equals(code));
+        }
+        changer.execute(() -> P.setLanguage(code));
+        buttonLanguage.setText(s("Language") + ": "
+                + (code.isEmpty() ? s("Language_system") : com.peaknav.viewer.I18NWrapper.nameOf(code)));
+        getNativeScreenCaller().alertMessage(s("Language_restart"));
+    }
+
+    private Table createSatelliteSourceSelectBox() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+        populateSatelliteSourceSelectBox(table);
+        // Hidden until the user opens it. Rebuilds must not touch visibility, otherwise adding
+        // or deleting a source would close the menu the user is still working in.
+        table.setVisible(false);
+        return table;
+    }
+
+    /**
+     * (Re)builds the list of satellite sources. It has to be rebuildable rather than built once,
+     * because the user can add and remove their own providers while the app is running.
+     */
+    private void populateSatelliteSourceSelectBox(Table table) {
+        table.clearChildren();
+        selectBoxSatSrcMap.clear();
+
+        List<SatelliteImageProvider> providers = P.getSatelliteProviderRegistry().getAllProviders();
+
+        // Only give up width for the delete column once there is something to delete. When any
+        // custom source exists every row reserves it, including the built-ins that do not show
+        // one, so all source buttons stay exactly the same size as each other.
+        boolean anyCustom = false;
+        for (SatelliteImageProvider provider : providers) {
+            if (provider.isCustom()) {
+                anyCustom = true;
+                break;
+            }
+        }
+        float removeWidth = anyCustom ? buttonWidth * REMOVE_BUTTON_WIDTH_FRACTION : 0f;
+
+        // The scrollbar only appears once the list actually overflows, so reserve a lane for it
+        // only then. Otherwise every source button would be permanently narrowed to make room for
+        // a bar that is not there.
+        float scrollBarWidth = SCROLLBAR_WIDTH_FRACTION * roundButtonSize;
+        float rowHeight = height + padHeight;
+        float wantedHeight = providers.size() * rowHeight;
+        float maxHeight = Gdx.graphics.getHeight() * MAX_PROVIDER_LIST_SCREEN_FRACTION;
+        // Show a whole number of rows: a row clipped through the middle at the bottom edge reads
+        // as a rendering glitch rather than as "there is more below".
+        int visibleRows = Math.max(1, (int) (maxHeight / rowHeight));
+        float listHeight = Math.min(wantedHeight, visibleRows * rowHeight);
+        boolean scrolls = wantedHeight > listHeight;
+        float scrollBarLane = scrolls ? scrollBarWidth + SCROLLBAR_GAP_FRACTION * roundButtonSize : 0f;
+
+        float nameWidth = buttonWidth - removeWidth - scrollBarLane;
+
+        Table providerList = new Table();
+        providerList.top();
+
+        SatelliteImageProvider selected = P.getUnderlayImageProvider();
+
+        for (SatelliteImageProvider provider : providers) {
+            TextButton button = getC().widgetGetter.getTextButton(
+                    provider.getProviderName(), true);
+            button.setProgrammaticChangeEvents(false);
+
+            if (selected != null && provider.getId().equals(selected.getId())) {
+                button.setChecked(true);
+                prevChecked = button;
+            } else {
+                button.setChecked(false);
+            }
+
+            selectBoxSatSrcMap.put(provider.getId(), button);
+
+            button.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    changer.execute(
+                            () -> {
+                                P.setUnderlayImageProvider(provider);
+                                getC().widgetGetter.setCopyrightLabel(provider.getCopyrightNotice());
+                                getC().tileManager.tileRenderer.drawSatelliteLayer();
+                            });
+                    if (prevChecked != null)
+                        prevChecked.setChecked(false);
+                    button.setChecked(true);
+                    prevChecked = button;
+                    table.setVisible(false);
+                    P.setLayerVisibleUnderlayLayer(true);
+                    hide();
+                }
+            });
+
+            providerList.add(button).width(nameWidth).height(height).padBottom(padHeight);
+
+            if (provider.isCustom()) {
+                // Custom entries get a delete button next to the name.
+                TextButton removeButton = getC().widgetGetter.getTextButton("X", false);
+                removeButton.addListener(new ChangeListener() {
+                    @Override
+                    public void changed(ChangeEvent event, Actor actor) {
+                        P.getSatelliteProviderRegistry().removeCustomProvider(provider);
+                        P.onCustomProviderRemoved(provider);
+                        prevChecked = null;
+                        populateSatelliteSourceSelectBox(table);
+                        getC().widgetGetter.setCopyrightLabel(
+                                P.getUnderlayImageProvider().getCopyrightNotice());
+                    }
+                });
+                providerList.add(removeButton).width(removeWidth).height(height).padBottom(padHeight);
+            } else if (anyCustom) {
+                // Empty spacer, so built-in and custom name buttons stay the same width.
+                providerList.add().width(removeWidth).height(height).padBottom(padHeight);
+            }
+            providerList.row();
+        }
+
+        // The list can grow without limit as the user adds sources, so it scrolls once it no
+        // longer fits. "Add" and "Back" stay outside the scroll area and are always reachable.
+        ScrollPane.ScrollPaneStyle scrollPaneStyle = new ScrollPane.ScrollPaneStyle();
+        if (scrolls) {
+            // The default drawables are a bare 10px texture, which renders as a hairline. Size
+            // both track and knob explicitly so the bar is wide enough to see and to drag.
+            TextureRegionDrawable track = getC().widgetTextures.getUniformDrawable(SCROLLBAR_TRACK_COLOR);
+            track.setMinWidth(scrollBarWidth);
+            TextureRegionDrawable knob = getC().widgetTextures.getUniformDrawable(SCROLLBAR_KNOB_COLOR);
+            knob.setMinWidth(scrollBarWidth);
+            scrollPaneStyle.vScroll = track;
+            scrollPaneStyle.vScrollKnob = knob;
+        }
+        ScrollPane scrollPane = new ScrollPane(providerList, scrollPaneStyle);
+        scrollPane.setScrollingDisabled(true, false);
+        scrollPane.setFadeScrollBars(false);
+        // Draw the bar over the widget rather than letting ScrollPane carve width out of it: the
+        // lane it sits in has already been reserved above, so it lands beside the buttons with a
+        // gap rather than on top of them.
+        scrollPane.setScrollbarsOnTop(true);
+        scrollPane.setOverscroll(false, false);
+
+        table.add(scrollPane)
+                .width(buttonWidth)
+                .height(listHeight)
+                .padBottom(padHeight)
+                .row();
+
+        List<Table> buttons = new ArrayList<>(2);
+
+        WidgetGetter.ImageTextButtonOptionPane addCustom = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_satellite.png", s("Add_custom_provider"), false);
+        addCustom.addClickListener(() -> promptForCustomSatelliteProvider(table));
+        buttons.add(addCustom);
+
+        WidgetGetter.ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton("icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true);
+    }
+
+    /**
+     * Asks for a custom tile source. The native dialog runs on the platform UI thread, so the
+     * menu is rebuilt through postRunnable to get back onto the render thread first.
+     */
+    private void promptForCustomSatelliteProvider(Table table) {
+        NativeScreenCaller nativeScreenCaller = getNativeScreenCaller();
+        if (nativeScreenCaller == null) {
+            // iOS does not provide one.
+            return;
+        }
+        nativeScreenCaller.promptForTextFields(
+                s("Add_custom_provider"),
+                s("Provider_url_help"),
+                new String[]{s("Provider_URL_template"), s("Provider_name"), s("Provider_attribution")},
+                new String[]{"", "", ""},
+                new TextFieldsCallback() {
+                    @Override
+                    public void onEntered(String[] values) {
+                        String error = P.getSatelliteProviderRegistry()
+                                .addCustomProvider(values[0], values[1], values[2]);
+                        Gdx.app.postRunnable(() -> {
+                            if (error != null) {
+                                nativeScreenCaller.makeToast(error);
+                                return;
+                            }
+                            prevChecked = null;
+                            populateSatelliteSourceSelectBox(table);
+                        });
+                    }
+
+                    @Override
+                    public void onCancelled() {
+                    }
+                });
+    }
+
+    private Table createDownloadSourceSelectBox() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+        populateDownloadSourceSelectBox(table);
+        table.setVisible(false);
+        return table;
+    }
+
+    /**
+     * (Re)builds the list of map-data (download) sources. They are fallback mirrors, tried in list
+     * order, so there is no selection: each row is just the provider, tap to edit, with a delete
+     * button. "Add" and "Back" sit below and stay reachable even when the list scrolls.
+     */
+    private void populateDownloadSourceSelectBox(Table table) {
+        table.clearChildren();
+
+        List<DownloadProvider> providers = getC().downloadProviderRegistry.getProviders();
+
+        // Reserve the delete column only when something is actually removable (the built-in
+        // HuggingFace default is not), so with just the default every row stays full width.
+        boolean anyRemovable = false;
+        for (DownloadProvider provider : providers) {
+            if (!provider.builtin) {
+                anyRemovable = true;
+                break;
+            }
+        }
+        float removeWidth = anyRemovable ? buttonWidth * REMOVE_BUTTON_WIDTH_FRACTION : 0f;
+        float scrollBarWidth = SCROLLBAR_WIDTH_FRACTION * roundButtonSize;
+        float rowHeight = height + padHeight;
+        float wantedHeight = providers.size() * rowHeight;
+        float maxHeight = Gdx.graphics.getHeight() * MAX_PROVIDER_LIST_SCREEN_FRACTION;
+        int visibleRows = Math.max(1, (int) (maxHeight / rowHeight));
+        float listHeight = Math.min(wantedHeight, visibleRows * rowHeight);
+        boolean scrolls = wantedHeight > listHeight;
+        float scrollBarLane = scrolls ? scrollBarWidth + SCROLLBAR_GAP_FRACTION * roundButtonSize : 0f;
+        float nameWidth = buttonWidth - removeWidth - scrollBarLane;
+
+        Table providerList = new Table();
+        providerList.top();
+
+        for (int i = 0; i < providers.size(); i++) {
+            final int index = i;
+            final DownloadProvider provider = providers.get(i);
+
+            TextButton button = getC().widgetGetter.getTextButton(provider.name, false);
+            button.addListener(new ChangeListener() {
+                @Override
+                public void changed(ChangeEvent event, Actor actor) {
+                    promptForEditDownloadProvider(table, index, provider);
+                }
+            });
+            providerList.add(button).width(nameWidth).height(height).padBottom(padHeight);
+
+            if (!provider.builtin) {
+                TextButton removeButton = getC().widgetGetter.getTextButton("X", false);
+                removeButton.addListener(new ChangeListener() {
+                    @Override
+                    public void changed(ChangeEvent event, Actor actor) {
+                        getC().downloadProviderRegistry.removeProvider(index);
+                        populateDownloadSourceSelectBox(table);
+                    }
+                });
+                providerList.add(removeButton).width(removeWidth).height(height).padBottom(padHeight);
+            } else if (anyRemovable) {
+                // Keep built-in and removable rows the same width by reserving the empty column.
+                providerList.add().width(removeWidth).height(height).padBottom(padHeight);
+            }
+            providerList.row();
+        }
+
+        ScrollPane.ScrollPaneStyle scrollPaneStyle = new ScrollPane.ScrollPaneStyle();
+        if (scrolls) {
+            TextureRegionDrawable track = getC().widgetTextures.getUniformDrawable(SCROLLBAR_TRACK_COLOR);
+            track.setMinWidth(scrollBarWidth);
+            TextureRegionDrawable knob = getC().widgetTextures.getUniformDrawable(SCROLLBAR_KNOB_COLOR);
+            knob.setMinWidth(scrollBarWidth);
+            scrollPaneStyle.vScroll = track;
+            scrollPaneStyle.vScrollKnob = knob;
+        }
+        ScrollPane scrollPane = new ScrollPane(providerList, scrollPaneStyle);
+        scrollPane.setScrollingDisabled(true, false);
+        scrollPane.setFadeScrollBars(false);
+        scrollPane.setScrollbarsOnTop(true);
+        scrollPane.setOverscroll(false, false);
+
+        table.add(scrollPane)
+                .width(buttonWidth)
+                .height(listHeight)
+                .padBottom(padHeight)
+                .row();
+
+        List<Table> buttons = new ArrayList<>(2);
+
+        WidgetGetter.ImageTextButtonOptionPane addSource = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_download_data.png", s("Add_map_data_source"), false);
+        addSource.addClickListener(() -> promptForCustomDownloadProvider(table));
+        buttons.add(addSource);
+
+        WidgetGetter.ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton("icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true);
+    }
+
+    private void promptForCustomDownloadProvider(Table table) {
+        NativeScreenCaller nativeScreenCaller = getNativeScreenCaller();
+        if (nativeScreenCaller == null) {
+            return;
+        }
+        nativeScreenCaller.promptForTextFields(
+                s("Add_map_data_source"),
+                "",
+                new String[]{s("Provider_name"), s("Elevation_base_url"), s("Map_data_base_url")},
+                new String[]{"", "", ""},
+                new TextFieldsCallback() {
+                    @Override
+                    public void onEntered(String[] values) {
+                        String error = getC().downloadProviderRegistry.addProvider(values[0], values[1], values[2]);
+                        Gdx.app.postRunnable(() -> {
+                            if (error != null) {
+                                nativeScreenCaller.makeToast(error);
+                                return;
+                            }
+                            populateDownloadSourceSelectBox(table);
+                        });
+                    }
+
+                    @Override
+                    public void onCancelled() {
+                    }
+                });
+    }
+
+    private void promptForEditDownloadProvider(Table table, int index, DownloadProvider provider) {
+        NativeScreenCaller nativeScreenCaller = getNativeScreenCaller();
+        if (nativeScreenCaller == null) {
+            return;
+        }
+        nativeScreenCaller.promptForTextFields(
+                s("Edit_map_data_source"),
+                "",
+                new String[]{s("Provider_name"), s("Elevation_base_url"), s("Map_data_base_url")},
+                new String[]{
+                        provider.name == null ? "" : provider.name,
+                        provider.elevationBaseUrl == null ? "" : provider.elevationBaseUrl,
+                        provider.mapDataBaseUrl == null ? "" : provider.mapDataBaseUrl},
+                new TextFieldsCallback() {
+                    @Override
+                    public void onEntered(String[] values) {
+                        String error = getC().downloadProviderRegistry
+                                .updateProvider(index, values[0], values[1], values[2]);
+                        Gdx.app.postRunnable(() -> {
+                            if (error != null) {
+                                nativeScreenCaller.makeToast(error);
+                                return;
+                            }
+                            populateDownloadSourceSelectBox(table);
+                        });
+                    }
+
+                    @Override
+                    public void onCancelled() {
+                    }
+                });
+    }
+
+    /**
+     * Switches the unit system for everything on screen at once. Peak labels carry their
+     * elevation in the unit they were built with, so without telling them they kept the
+     * old one until their POIs were next loaded (issue #22). Not persisted here: the
+     * buttons save the choice separately, and the headless renderer - which shares the
+     * desktop app's preferences - must not.
+     */
+    public static void applyUnitSystem(com.peaknav.utils.PreferencesManager.UnitSystem unitSystem) {
+        P.setUnitSystemNoPersist(unitSystem);
+        if (getC() != null && getC().getMapViewerScreen() != null) {
+            Gdx.app.postRunnable(() -> getC().getMapViewerScreen().refreshFeaturePaneUnits());
+        }
+        com.peaknav.viewer.labels.DrawLabel.invalidateAllTexts();
+        // The texts are re-measured, but each label's box - its background and the shape the
+        // overlap pass places - was only rebuilt when the labels were next placed, on the next
+        // camera move: until then "7037 ft" sat in the box measured for "2145 m", its end
+        // against the edge. Rebuilt now, as the large-fonts switch does, and placed again,
+        // since every peak label has changed width.
+        if (getC() != null && getC().O != null) {
+            getC().submitExecutorGeneric(() -> {
+                getC().O.iterateOverVisiblePoisUnstoppable(
+                        poiObject -> poiObject.drawLabel.updateLabelPolygonCoordinates());
+                getC().dataRetrieveThreadManager.triggerUpdateVisibilityLabelOverlap();
+            });
+        }
+    }
+
+    private Table createSelectBoxUnitSystem() {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+        List<Table> buttons = new ArrayList<>(4);
+
+        TextButton buttonUnitsMetric = getC().widgetGetter.getTextButton(s("Metric"), true);
+        buttonUnitsMetric.setProgrammaticChangeEvents(false);
+        buttonUnitsMetric.setChecked(P.getUnitSystem() == METRIC);
+        buttons.add(buttonUnitsMetric);
+
+        TextButton buttonUnitsImperial = getC().widgetGetter.getTextButton(s("Imperial"), true);
+        buttonUnitsImperial.setProgrammaticChangeEvents(false);
+        buttonUnitsImperial.setChecked(P.getUnitSystem() == IMPERIAL);
+        buttons.add(buttonUnitsImperial);
+
+        buttonUnitsMetric.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                applyUnitSystem(METRIC);
+                changer.submit(() -> P.setUnitSystem(METRIC));
+                buttonUnitsMetric.setChecked(true);
+                buttonUnitsImperial.setChecked(false);
+                table.setVisible(false);
+                hide();
+            }
+        });
+        buttonUnitsImperial.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                applyUnitSystem(IMPERIAL);
+                changer.submit(() -> P.setUnitSystem(IMPERIAL));
+                buttonUnitsMetric.setChecked(false);
+                buttonUnitsImperial.setChecked(true);
+                table.setVisible(false);
+                hide();
+            }
+        });
+
+        WidgetGetter.ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton("icons/icon_back.png", s("Back"), false);
+        back.addClickListener(() -> {
+            table.setVisible(false);
+            show();
+        });
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, true);
+        table.setVisible(false);
+        return table;
+    }
+
+    private Table getPreferencesTable(boolean oneColumn) {
+        Table table = new Table();
+        table.center();
+        table.setFillParent(true);
+
+        List<Table> buttons = new ArrayList<>(16);
+
+        // Labels: every label on or off at once, plus a "..." submenu for each kind (peaks, places,
+        // alpine huts, and the ranged labels: islands, cities, mountain ranges) - the same
+        // composite scheme as the rows below. Only the "..." opens the submenu.
+        ImageTextButtonOptionPane checkBoxLabels = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_peak_names.png", s("Labels_menu"), true);
+        addCheckingStateProperty(checkBoxLabels, () -> P.isLabelsVisible());
+        checkBoxLabels.addClickListener(() -> changer.execute(
+                () -> P.setLabelsVisible(checkBoxLabels.isChecked())));
+        checkBoxLabels.setProgrammaticChangeEvents(false);
+        Table tableLabels = new Table();
+        tableLabels.add(checkBoxLabels).width(buttonWidth * 0.8f);
+        TextButton buttonLabelsOptions = getC().widgetGetter.getTextButton("...", false);
+        buttonLabelsOptions.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                // Two columns on a screen held sideways, as the main menu and the trails'
+                // submenu are: in one, its eleven rows ran off the top and bottom.
+                labelsMenu.show();
+                table.setVisible(false);
+                tableOneColumn.setVisible(false);
+            }
+        });
+        tableLabels.add(buttonLabelsOptions).width(buttonWidth * 0.2f).height(height);
+        buttons.add(tableLabels);
+
+
+        // Compass & location: master on/off plus a "..." submenu (coordinates, horizon
+        // markers, corner rose) - the same composite scheme as the sky row below.
+        ImageTextButtonOptionPane checkBoxCompassLocation = getC().widgetGetter.getImageTextButton(
+                "icons/icon_compass_location.png", s("Compass_location"), true);
+        addCheckingStateProperty(checkBoxCompassLocation, () -> P.isCompassLocation());
+        checkBoxCompassLocation.addClickListener(() -> changer.execute(
+                () -> P.setCompassLocation(checkBoxCompassLocation.isChecked())));
+        checkBoxCompassLocation.setProgrammaticChangeEvents(false);
+        Table tableCompass = new Table();
+        tableCompass.add(checkBoxCompassLocation).width(buttonWidth * 0.8f);
+        TextButton buttonCompassOptions = getC().widgetGetter.getTextButton("...", false);
+        buttonCompassOptions.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                selectCompass.setVisible(true);
+                table.setVisible(false);
+            }
+        });
+        tableCompass.add(buttonCompassOptions).width(buttonWidth * 0.2f).height(height);
+        buttons.add(tableCompass);
+
+        // Sky & stars: a shortened on/off checkbox with a "..." options button in the same row
+        // (same scheme as the satellite and map-data rows above).
+        ImageTextButtonOptionPane checkBoxSky = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_sky.png", s("Sky_view"), true);
+        addCheckingStateProperty(checkBoxSky, () -> P.isSkyView());
+        checkBoxSky.addClickListener(() -> changer.execute(
+                () -> P.setSkyView(checkBoxSky.isChecked())));
+        checkBoxSky.setProgrammaticChangeEvents(false);
+        Table tableSky = new Table();
+        tableSky.add(checkBoxSky).width(buttonWidth * 0.8f);
+        TextButton buttonSkyOptions = getC().widgetGetter.getTextButton("...", false);
+        buttonSkyOptions.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                selectSky.setVisible(true);
+                table.setVisible(false);
+            }
+        });
+        tableSky.add(buttonSkyOptions).width(buttonWidth * 0.2f).height(height);
+        buttons.add(tableSky);
+
+        // The user's own things: GPX paths and markers, each with its submenu under this one.
+        ImageTextButtonOptionPane buttonGpxMenu = getC().widgetGetter.getImageTextButton(
+                "icons/icon_map.png", s("Paths_and_markers"), false);
+        buttonGpxMenu.addClickListener(() -> {
+            selectPathsAndMarkers.setVisible(true);
+            table.setVisible(false);
+            tableOneColumn.setVisible(false);
+        });
+        buttons.add(buttonGpxMenu);
+
+        // Named for everything under it - roads and paths, ski pistes, lifts - not after the
+        // first of its submenu rows, which keeps the name "Roads and paths".
+        ImageTextButtonOptionPane checkBoxLayerVisibleBaseRoads = getC().widgetGetter.getImageTextButton("icons/icon_checkbox_roads.png", s("Routes_group"), true);
+        addCheckingStateProperty(checkBoxLayerVisibleBaseRoads, () -> P.isViewerLayerVisibleBaseRoads()
+                || P.isSkiSlopesVisible() || P.isLiftsVisible());
+        checkBoxLayerVisibleBaseRoads.addClickListener(() -> changer.execute(
+                () -> applyRoutesGroupVisible(checkBoxLayerVisibleBaseRoads.isChecked())));
+        checkBoxLayerVisibleBaseRoads.setProgrammaticChangeEvents(false);
+        // Roads & paths: on/off plus a "..." submenu - roads and paths, and ski pistes, each with a
+        // "..." of its own - the same composite scheme as the satellite and sky rows.
+        Table tableRoads = new Table();
+        tableRoads.add(checkBoxLayerVisibleBaseRoads).width(buttonWidth * 0.8f);
+        TextButton buttonRoadOptions = getC().widgetGetter.getTextButton("...", false);
+        buttonRoadOptions.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                openRoadsGroup();
+                table.setVisible(false);
+                tableOneColumn.setVisible(false);
+            }
+        });
+        tableRoads.add(buttonRoadOptions).width(buttonWidth * 0.2f).height(height);
+        buttons.add(tableRoads);
+
+        ImageTextButtonOptionPane checkBoxLayerVisibleUnderlayLayer = getC().widgetGetter.getImageTextButton("icons/icon_checkbox_satellite.png", s("Satellite_images"), true);
+        addCheckingStateProperty(checkBoxLayerVisibleUnderlayLayer, ()->P.isLayerVisibleUnderlayLayer());
+        checkBoxLayerVisibleUnderlayLayer.addClickListener(() -> {
+            /*
+            if (!getAdUtils().isSubscribed()) {
+                // getNativeScreenCaller().openSubscribeDialog();
+                // Unsubscribe tile provider:
+                P.setUnderlayImageProvider(SatelliteProviderOptions.USGS_SATELLITE);
+                // checkBoxLayerVisibleUnderlayLayer.setChecked(false);
+            }
+             */
+            changer.execute(() -> {
+                boolean checked = checkBoxLayerVisibleUnderlayLayer.isChecked();
+                P.setLayerVisibleUnderlayLayer(checked);
+                if (checked) {
+                    getC().tileManager.startAerialAndDataRenderExecutors();
+                }
+            });
+        });
+        checkBoxLayerVisibleUnderlayLayer.setProgrammaticChangeEvents(false);
+        Table tableSatelliteVisible = new Table();
+        tableSatelliteVisible.add(checkBoxLayerVisibleUnderlayLayer).width(buttonWidth*0.8f);
+        TextButton buttonSatelliteOptions = getC().widgetGetter.getTextButton("...", false);
+        buttonSatelliteOptions.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                checkSelectBoxSatSrcSelection();
+                selectBoxSatSrc.setVisible(true);
+                table.setVisible(false);
+            }
+        });
+        tableSatelliteVisible.add(buttonSatelliteOptions).width(buttonWidth*0.2f).height(height);
+        buttons.add(tableSatelliteVisible);
+
+        ImageTextButtonOptionPane checkBoxSunShading = getC().widgetGetter.getImageTextButton(
+                "icons/icon_checkbox_sun.png", s("Sun_shading"), true);
+        addCheckingStateProperty(checkBoxSunShading, () -> P.isSunShading());
+        // The shader reads the preference every frame, so the terrain updates without a redraw.
+        checkBoxSunShading.addClickListener(() -> changer.execute(
+                () -> P.setSunShading(checkBoxSunShading.isChecked())));
+        checkBoxSunShading.setProgrammaticChangeEvents(false);
+        buttons.add(checkBoxSunShading);
+
+        ImageTextButtonOptionPane buttonMapDataDownload = getC().widgetGetter.getImageTextButton("icons/icon_checkbox_download_data.png", s("Download_map_data"), false);
+        buttonMapDataDownload.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                mapApp.nativeScreenCaller.openMapDataDownloadChooser();
+                mapApp.mapViewerScreen.optionPane.hide();
+            }
+        });
+        Table tableMapData = new Table();
+        tableMapData.add(buttonMapDataDownload).width(buttonWidth * 0.8f);
+        TextButton buttonMapDataSources = getC().widgetGetter.getTextButton("...", false);
+        buttonMapDataSources.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                populateDownloadSourceSelectBox(selectBoxDownloadSrc);
+                selectBoxDownloadSrc.setVisible(true);
+                table.setVisible(false);
+            }
+        });
+        tableMapData.add(buttonMapDataSources).width(buttonWidth * 0.2f).height(height);
+        buttons.add(tableMapData);
+
+        ImageTextButtonOptionPane buttonUnits = getC().widgetGetter.getImageTextButton(
+                "icons/icon_units.png", s("Units"), false);
+        buttonUnits.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                selectBoxUnits.setVisible(true);
+                table.setVisible(false);
+            }
+        });
+        buttons.add(buttonUnits);
+
+        // More: what is about the app rather than the view - its information, the slideshow,
+        // the language, the storage. One button that opens them. It used to be the information
+        // with a "..." beside it, and the information was then there twice, here and in the menu
+        // the "..." opened.
+        ImageTextButtonOptionPane buttonMore = getC().widgetGetter.getImageTextButton(
+                "icons/icon_more.png", s("More"), false);
+        buttonMore.setName("options_more");
+        buttonMore.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                selectInfoOpts.setVisible(true);
+                table.setVisible(false);
+            }
+        });
+        buttons.add(buttonMore);
+
+        ImageTextButtonOptionPane back = getC().widgetGetter.getImageTextButton("icons/icon_back.png", s("Back"), false);
+        back.addClickListener(this::hide);
+        buttons.add(back);
+
+        addButtonsToTable(table, buttons, oneColumn);
+
+        return table;
+    }
+
+    private void checkSelectBoxSatSrcSelection() {
+        SatelliteImageProvider provider = P.getUnderlayImageProvider();
+        String selectedId = provider == null ? null : provider.getId();
+        for (Map.Entry<String, TextButton> entry : selectBoxSatSrcMap.entrySet()) {
+            if (entry.getKey().equals(selectedId)) {
+                entry.getValue().setChecked(true);
+            } else {
+                entry.getValue().setChecked(false);
+            }
+        }
+    }
+
+    Map<Button, Callable<Boolean>> checkingStateMap = new HashMap<>();
+
+    private void addCheckingStateProperty(Button toggable, Callable<Boolean> callable) {
+        toggable.setProgrammaticChangeEvents(false);
+        checkingStateMap.put(toggable, callable);
+    }
+
+    private void updateCheckingStates() {
+        for (Map.Entry<Button, Callable<Boolean>> entry : checkingStateMap.entrySet()) {
+            try {
+                entry.getKey().setChecked(entry.getValue().call());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    private void addButtonsToTable(Table table, List<Table> buttons, boolean oneColumn) {
+        addButtonsToTable(table, buttons, oneColumn, buttonWidth);
+    }
+
+    /**
+     * Lays the buttons out one per row, or two per row filling left to right.
+     *
+     * <p>Back is always a menu's last button, and in two columns it must sit in the left column,
+     * where the eye starts and where the main menu has it. Filling in order would put it on the
+     * right whenever the count is even, so the last two buttons swap places then. A layout built
+     * by hand with {@link #addPair} has to follow the same rule: Back as the left argument.
+     */
+    private void addButtonsToTable(Table table, List<Table> buttons, boolean oneColumn, float buttonWidth) {
+
+        for (int j = 0; j < buttons.size(); j++) {
+            int i = j;
+            if (buttons.size() % 2 == 0 && j >= buttons.size() - 2 && !oneColumn) {
+                if (j % 2 == 0) {
+                    i++;
+                } else {
+                    i--;
+                }
+            }
+            Table button = buttons.get(i);
+            Cell<Table> cell = table.add(button).width(buttonWidth).height(height).uniformX();
+            cell.padBottom(padHeight);
+            if (j == buttons.size() - 1)
+                break;
+            if (oneColumn || j % 2 == 1) {
+                cell.row();
+            } else {
+                cell.padRight(0.2f*roundButtonSize);
+            }
+        }
+    }
+
+    public void show() {
+        updateCheckingStates();
+        mainMenu.show();
+        selectBoxSatSrc.setVisible(false);
+        selectBoxDownloadSrc.setVisible(false);
+        selectBoxUnits.setVisible(false);
+        selectInfoOpts.setVisible(false);
+        selectLanguage.setVisible(false);
+        selectStorage.setVisible(false);
+        selectGpx.setVisible(false);
+        selectPathsAndMarkers.setVisible(false);
+        selectMarkers.setVisible(false);
+        selectLabels.setVisible(false);
+        selectLabelsOneColumn.setVisible(false);
+        selectSky.setVisible(false);
+        selectCompass.setVisible(false);
+        selectRoads.setVisible(false);
+        selectRoadsOneColumn.setVisible(false);
+        selectRoadsGroup.setVisible(false);
+        selectPistes.setVisible(false);
+        // tableAppInfo.setVisible(false);
+
+        optionsButton.setChecked(true);
+    }
+
+    public void hide() {
+        table.setVisible(false);
+        tableOneColumn.setVisible(false);
+        selectBoxSatSrc.setVisible(false);
+        selectBoxDownloadSrc.setVisible(false);
+        selectBoxUnits.setVisible(false);
+        selectInfoOpts.setVisible(false);
+        selectLanguage.setVisible(false);
+        selectStorage.setVisible(false);
+        selectGpx.setVisible(false);
+        selectPathsAndMarkers.setVisible(false);
+        selectMarkers.setVisible(false);
+        selectLabels.setVisible(false);
+        selectLabelsOneColumn.setVisible(false);
+        selectSky.setVisible(false);
+        selectCompass.setVisible(false);
+        selectRoads.setVisible(false);
+        selectRoadsOneColumn.setVisible(false);
+        selectRoadsGroup.setVisible(false);
+        selectPistes.setVisible(false);
+        // tableAppInfo.setVisible(false);
+        optionsButton.setChecked(false);
+        changer.submit(() -> getC().widgetGetter.setCopyrightLabel(
+                        P.getUnderlayImageProvider().getCopyrightNotice()));
+    }
+
+    public Table getTable() {
+        return table;
+    }
+}

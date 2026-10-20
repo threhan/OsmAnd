@@ -1,0 +1,962 @@
+package com.peaknav.compatibility;
+
+import com.peaknav.viewer.mapscreens.MapScreens;
+import static android.Manifest.permission.ACCESS_COARSE_LOCATION;
+import static android.Manifest.permission.ACCESS_FINE_LOCATION;
+import static com.peaknav.utils.PeakNavPermissions.checkLocationPermission;
+import static com.peaknav.utils.PeakNavUtils.getC;
+import static com.peaknav.utils.PeakNavUtils.s;
+import static com.peaknav.views.AndroidLauncher.CAMERA_PERMISSION;
+import static com.peaknav.views.AndroidLauncher.CAMERA_REQUEST_CODE;
+import static com.peaknav.views.AndroidLauncher.MEDIA_LOCATION_REQUEST_CODE;
+import static com.peaknav.views.AndroidLauncher.NOTIFICATIONS_REQUEST_CODE;
+import static com.peaknav.views.AndroidLauncher.PICK_GPX;
+import static com.peaknav.views.AndroidLauncher.PICK_IMAGE;
+
+import android.Manifest;
+import android.app.Activity;
+import android.app.ActivityManager;
+import android.app.AlertDialog;
+import android.content.ContentValues;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.provider.MediaStore;
+import android.provider.Settings;
+import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
+
+import com.badlogic.gdx.graphics.Pixmap;
+import com.badlogic.gdx.graphics.PixmapIO;
+import com.peaknav.R;
+import com.peaknav.controller.OrientationPointerController;
+import com.peaknav.gesture.OrientationPointerListener;
+import com.peaknav.ui.CurrentLocationCallback;
+import com.peaknav.ui.CurrentLocationListener;
+import com.peaknav.ui.TextFieldsCallback;
+import com.peaknav.utils.AndroidUI;
+import com.peaknav.viewer.GoToDownloadDialog;
+import com.peaknav.viewer.MapViewerSingleton;
+import com.peaknav.views.AndroidLauncher;
+import com.peaknav.views.AppInfoAndroidView;
+import com.peaknav.views.CameraPictureView;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+
+public class NativeScreenCallerAndroid extends NativeScreenCaller {
+
+    private static AlertDialog locationSettingsDialog = null;
+    private final Context context;
+    private final AndroidLauncher mainActivity;
+
+    public NativeScreenCallerAndroid(Context context, AndroidLauncher mainActivity) {
+        this.context = context;
+        this.mainActivity = mainActivity;
+    }
+
+    @Override
+    public void setMapDataDownloadRunning(boolean running) {
+        if (running) {
+            MapDataDownloadService.start(context);
+            askToShowDownloadNotification();
+        } else {
+            MapDataDownloadService.stop();
+        }
+    }
+
+    /**
+     * Android 13 on: the download's notification is shown only with POST_NOTIFICATIONS, which
+     * has to be asked for. The service runs either way, so a refusal costs the notification
+     * and nothing else; the system itself stops asking after the second "Don't allow".
+     */
+    private void askToShowDownloadNotification() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return;
+        }
+        mainActivity.runOnUiThread(() -> {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(mainActivity,
+                        new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                        NOTIFICATIONS_REQUEST_CODE);
+            }
+        });
+    }
+
+    @Override
+    public void setMapDataDownloadProgress(float ratio) {
+        MapDataDownloadService.progress(ratio);
+    }
+
+    private void startActivityAndPause(Intent intent) {
+        MapViewerSingleton.getAppInstance().pause();
+        context.startActivity(intent);
+    }
+
+    private void startActivityForResultAndPause(Intent intent, int requestCode) {
+        MapViewerSingleton.getAppInstance().pause();
+        mainActivity.startActivityForResult(intent, requestCode);
+    }
+
+    @Override
+    public void ensureLocationPermissions() {
+        checkLocationPermission(mainActivity);
+    }
+
+    /**
+     * Hands the coordinate to Android, so whatever the person has installed can open it.
+     *
+     * <p>A {@code geo:} URI is the platform's standard way of saying "this point": it goes to
+     * whichever map app the person has made their default, with nothing asked of them here.
+     * Naming a provider in the app, or putting a chooser in front of them every time, both
+     * take a decision that Android already handles and remembers.
+     *
+     * <p>If nothing on the device answers a geo: URI - a phone with no map app at all - it
+     * falls back to the same web page the desktop uses, which lists the services for a point.
+     */
+    @Override
+    public void openCoordinate(double latitude, double longitude) {
+        mainActivity.runOnUiThread(() -> {
+            String point = String.format(java.util.Locale.ENGLISH, "%.6f,%.6f", latitude, longitude);
+            // The q= repeat is what makes a marker appear: geo:lat,lon alone only centres.
+            Intent map = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                    "geo:" + point + "?q=" + point + "(PeakNav)"));
+            // Just start it. Do NOT ask resolveActivity() first: from Android 11 that only
+            // sees packages declared in <queries>, so it answers null even with three map
+            // apps installed - which sent this down the fallback path and put a dialog on
+            // screen instead of opening the map. Launching and catching the failure is the
+            // only reliable test of whether anything can handle it.
+            try {
+                mainActivity.startActivity(map);
+            } catch (android.content.ActivityNotFoundException noMapApp) {
+                // No map app at all. A browser is the last resort - still an app opening,
+                // never a dialog of ours.
+                String url = com.peaknav.utils.CoordinateLinks.geoHackUrl(
+                        latitude, longitude, java.util.Locale.getDefault().getLanguage());
+                try {
+                    mainActivity.startActivity(
+                            new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)));
+                } catch (android.content.ActivityNotFoundException noBrowser) {
+                    // Nothing on the device can open a coordinate or a web page. Say nothing:
+                    // an alert carrying a URL helps no one and is not what the button is for.
+                    System.err.println("openCoordinate: no app can handle geo: or https: " + url);
+                }
+            }
+        });
+    }
+
+    @Override
+    public void comingSoon() {
+        mainActivity.runOnUiThread(() ->
+            AndroidUI.alertMessage(s("Coming_soon"), this.mainActivity, false)
+        );
+    }
+
+    @Override
+    public void alertMessage(String message) {
+        mainActivity.runOnUiThread(() -> {
+            AlertDialog.Builder alertBuilder = new AlertDialog.Builder(mainActivity);
+            alertBuilder.setMessage(message)
+                    .setPositiveButton(s("OK"), (dialogInterface, i) -> {})
+                    .setCancelable(false);
+            show(alertBuilder);
+        });
+    }
+
+    @Override
+    public void promptForTextFields(
+            String title, String message, String[] labels, String[] initialValues, TextFieldsCallback callback) {
+        mainActivity.runOnUiThread(() -> {
+            android.widget.LinearLayout layout = new android.widget.LinearLayout(mainActivity);
+            layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+            int padding = Math.round(16 * mainActivity.getResources().getDisplayMetrics().density);
+            layout.setPadding(padding, padding, padding, padding);
+
+            if (message != null && !message.isEmpty()) {
+                android.widget.TextView help = new android.widget.TextView(mainActivity);
+                help.setText(message);
+                help.setPadding(0, 0, 0, padding);
+                layout.addView(help);
+            }
+
+            android.widget.EditText[] fields = new android.widget.EditText[labels.length];
+            for (int i = 0; i < labels.length; i++) {
+                android.widget.TextView label = new android.widget.TextView(mainActivity);
+                label.setText(labels[i]);
+                layout.addView(label);
+
+                android.widget.EditText field = new android.widget.EditText(mainActivity);
+                field.setSingleLine(true);
+                if (initialValues != null && i < initialValues.length && initialValues[i] != null) {
+                    field.setText(initialValues[i]);
+                }
+                fields[i] = field;
+                layout.addView(field);
+            }
+
+            android.widget.ScrollView scrollView = new android.widget.ScrollView(mainActivity);
+            scrollView.addView(layout);
+
+            AlertDialog.Builder builder = new AlertDialog.Builder(mainActivity);
+            builder.setTitle(title)
+                    .setView(scrollView)
+                    .setPositiveButton(s("OK"), (dialogInterface, i) -> {
+                        String[] values = new String[fields.length];
+                        for (int f = 0; f < fields.length; f++) {
+                            values[f] = fields[f].getText().toString();
+                        }
+                        callback.onEntered(values);
+                    })
+                    .setNegativeButton(s("Cancel"), (dialogInterface, i) -> callback.onCancelled())
+                    .setOnCancelListener(dialogInterface -> callback.onCancelled());
+            if (show(builder) == null) {
+                callback.onCancelled();
+            }
+        });
+    }
+
+    @Override
+    public long getTotalMemory() {
+        ActivityManager activityManager = (ActivityManager) mainActivity.getSystemService(Context.ACTIVITY_SERVICE);
+        ActivityManager.MemoryInfo memoryInfo = new ActivityManager.MemoryInfo();
+        activityManager.getMemoryInfo(memoryInfo);
+
+        return memoryInfo.totalMem;
+    }
+
+    public void popStack() {
+        FrameLayout overlay = mainActivity.findViewById(R.id.mv_ui_overlay);
+        overlay.setVisibility(View.INVISIBLE);
+
+        FrameLayout mapOverlay = mainActivity.findViewById(R.id.mv_map_container);
+        mapOverlay.setVisibility(View.VISIBLE);
+
+        FragmentManager fm = mainActivity.getSupportFragmentManager();
+        if (!fm.isStateSaved()) {
+            fm.popBackStack();
+        }
+
+        MapViewerSingleton.getAppInstance().resume();
+    }
+
+    @Override
+    public void getCallOnUIThread(Runnable runnable) {
+        mainActivity.runOnUiThread(runnable);
+    }
+
+    /**
+     * The download chooser, drawn by libGDX over the map like the other platforms' (see
+     * {@link MapScreens}). It used to be an osmdroid fragment, MapDataDownloadChooser.
+     */
+    @Override
+    public void openMapDataDownloadChooser(double lat, double lon, boolean goToAfterDownload) {
+        MapScreens.openDownloadChooser(lat, lon, goToAfterDownload, false);
+    }
+
+    @Override
+    public void openMapDataDownloadChooserWizard() {
+        MapScreens.openDownloadChooser(0, 0, false, true);
+    }
+
+    /**
+     * Location for the libGDX map screens, which ask from the render thread. LocationManager
+     * wants its requests made on a thread with a Looper - the UI thread - and a request made
+     * before the permission is granted is dropped, so it is queued to be made again when the
+     * answer comes (AndroidLauncher.onRequestPermissionsResult drains the queue). Only then:
+     * a request queued while the permission is already there would sit in the queue until
+     * some later permission prompt, and answer a screen long gone.
+     */
+    @Override
+    public void requestCurrentLocation(com.peaknav.ui.CurrentLocationCallback callback) {
+        runOnUiThread(() -> {
+            boolean granted = ActivityCompat.checkSelfPermission(context, ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                    || ActivityCompat.checkSelfPermission(context, ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            if (!granted) {
+                mainActivity.locationPermissionCallbacks.add(
+                        () -> getCurrentLocationListener(mainActivity).getCurrentLocation(callback));
+                awaitingLocationPermission.add(callback);
+                checkLocationPermission(mainActivity);
+                return;
+            }
+            getCurrentLocationListener(mainActivity).getCurrentLocation(callback);
+        });
+    }
+
+    /** The requests that wait on the permission prompt; UI thread only. */
+    private final List<com.peaknav.ui.CurrentLocationCallback> awaitingLocationPermission = new ArrayList<>();
+
+    /**
+     * The permission prompt has been answered. Refused, the requests that waited on it go to
+     * {@link #locationPermissionDenied} - which, on a first run, estimates the position from the
+     * network instead; true if it did, so no settings dialog goes up on top of its own.
+     */
+    public boolean locationPermissionAnswered(boolean granted) {
+        List<com.peaknav.ui.CurrentLocationCallback> waiting = new ArrayList<>(awaitingLocationPermission);
+        awaitingLocationPermission.clear();
+        if (granted) {
+            return false;
+        }
+        mainActivity.locationPermissionCallbacks.clear();
+        if (waiting.isEmpty()) {
+            return false;
+        }
+        // One estimate, and one dialog asking for it, answering them all.
+        return locationPermissionDenied((longitude, latitude) -> {
+            for (com.peaknav.ui.CurrentLocationCallback callback : waiting) {
+                callback.setCurrentLocation(longitude, latitude);
+            }
+        });
+    }
+
+    private void openFragmentWithTransaction(Fragment fragment, String name) {
+        FragmentManager fm = mainActivity.getSupportFragmentManager();
+        // Asked for from a late callback after the app was left: a transaction committed
+        // once the activity has saved its state throws IllegalStateException on the main
+        // thread, which ended the app. Nothing is opened then - the renderer is not paused and
+        // the map not hidden for a screen that would never come.
+        if (fm.isStateSaved() || mainActivity.isFinishing() || mainActivity.isDestroyed()) {
+            return;
+        }
+
+        FrameLayout overlay = mainActivity.findViewById(R.id.mv_ui_overlay);
+        overlay.setVisibility(View.VISIBLE);
+
+
+        FrameLayout mapOverlay = mainActivity.findViewById(R.id.mv_map_container);
+        mapOverlay.setVisibility(View.INVISIBLE);
+
+        fm.beginTransaction()
+                .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
+                .add(R.id.mv_ui_overlay, fragment, name)
+                .addToBackStack(null)
+                .commit();
+
+        MapViewerSingleton.getAppInstance().pause();
+    }
+
+    /** The search screen, drawn by libGDX over the map; it used to be the SearchMenu fragment. */
+    @Override
+    public void openScreenSearchLocation(com.peaknav.ui.ClickCallback callback) {
+        MapScreens.openSearch();
+    }
+
+    private boolean checkCameraHardware() {
+        return mainActivity.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
+    }
+
+    private boolean hasCameraPermission() {
+        return ContextCompat.checkSelfPermission(
+                mainActivity,
+                Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void  requestCameraPermission() {
+        ActivityCompat.requestPermissions(
+                mainActivity,
+                CAMERA_PERMISSION,
+                CAMERA_REQUEST_CODE
+        );
+    }
+
+    private void openCameraPictureViewLocal() {
+        runOnUiThread(() -> {
+            CameraPictureView fragment = new CameraPictureView();
+            openFragmentWithTransaction(fragment, "camera_picture_view");
+        });
+    }
+
+    public void openCameraPictureViewWithPermissionCheck() {
+        if (!checkCameraHardware()) {
+            return;
+        }
+        if (hasCameraPermission()) {
+            openCameraPictureViewLocal();
+        } else {
+            requestCameraPermission();
+        }
+    }
+
+    @Override
+    public void openCameraPictureView() {
+        openCameraPictureViewWithPermissionCheck();
+    }
+
+    @Override
+    public void openGalleryPick() {
+        // On Android 10+ the OS strips GPS EXIF from imported images unless the app holds
+        // ACCESS_MEDIA_LOCATION. Ask for it first, then open the picker either way — the
+        // import warns if the location turns out to be unreadable.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !hasMediaLocationPermission()) {
+            ActivityCompat.requestPermissions(
+                    mainActivity,
+                    new String[]{Manifest.permission.ACCESS_MEDIA_LOCATION},
+                    MEDIA_LOCATION_REQUEST_CODE);
+        } else {
+            launchGalleryPicker();
+        }
+    }
+
+    @Override
+    public void pickGpxFile() {
+        // GPX has no single agreed MIME type, so accept any openable document and let the user
+        // pick the .gpx. AndroidLauncher.onActivityResult reads the stream and hands it to the
+        // GpxManager.
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType("*/*");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResultAndPause(Intent.createChooser(intent, "Select GPX"), PICK_GPX);
+    }
+
+    /** Launches the image chooser. Public so the launcher can call it after the permission prompt. */
+    public void launchGalleryPicker() {
+        Intent intent = new Intent();
+        intent.setType("image/*");
+        intent.setAction(Intent.ACTION_GET_CONTENT);
+        startActivityForResultAndPause(Intent.createChooser(intent, "Select Picture"), PICK_IMAGE);
+    }
+
+    private boolean hasMediaLocationPermission() {
+        return ContextCompat.checkSelfPermission(
+                mainActivity,
+                Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void warnCannotReadImageLocation() {
+        mainActivity.runOnUiThread(() -> {
+            AlertDialog.Builder alertBuilder = new AlertDialog.Builder(mainActivity);
+            alertBuilder.setTitle(s("Image_location_missing_title"))
+                    .setMessage(s("Image_location_missing"))
+                    .setPositiveButton(android.R.string.ok, null);
+            show(alertBuilder);
+        });
+    }
+
+    @Override
+    public void promptGoToImageLocation(double lat, double lon) {
+        mainActivity.runOnUiThread(() -> {
+            AlertDialog.Builder alertBuilder = new AlertDialog.Builder(mainActivity);
+            alertBuilder.setTitle(s("Image_location_found"))
+                    .setMessage(s("Go_to_image_location_prompt"))
+                    .setPositiveButton(s("Yes"),
+                            (dialogInterface, i) ->
+                                    // Core's state belongs to the render thread, as on the other
+                                    // platforms: a GPX tour's frames were cleared under it.
+                                    com.badlogic.gdx.Gdx.app.postRunnable(() -> getC().L.setCurrentTargetCoords(lat, lon)))
+                    .setNegativeButton(s("No"), null);
+            show(alertBuilder);
+        });
+    }
+
+    @Override
+    public void promptYesNo(String title, String message, Runnable onYes) {
+        mainActivity.runOnUiThread(() -> {
+            AlertDialog.Builder alertBuilder = new AlertDialog.Builder(mainActivity);
+            alertBuilder.setTitle(title)
+                    .setMessage(message)
+                    .setPositiveButton(s("Yes"), (dialogInterface, i) -> onYes.run())
+                    .setNegativeButton(s("No"), null);
+            show(alertBuilder);
+        });
+    }
+
+    @Override
+    public void promptChoice(String title, String message, String first, String second,
+                             Runnable onFirst, Runnable onSecond) {
+        mainActivity.runOnUiThread(() -> show(new AlertDialog.Builder(mainActivity)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton(first, (dialogInterface, i) -> onFirst.run())
+                .setNegativeButton(second, (dialogInterface, i) -> onSecond.run())
+                // Back, or a tap beside the dialog, counts as the second answer.
+                .setOnCancelListener(dialogInterface -> onSecond.run())));
+    }
+
+    @Override
+    public void openAppInfoScreen() {
+        runOnUiThread(() -> {
+            AppInfoAndroidView fragment = new AppInfoAndroidView();
+            openFragmentWithTransaction(fragment, "app_info");
+        });
+    }
+    private OrientationPointerController orientationPointerController;
+    private OrientationPointerListener orientationPointerListener;
+
+    @Override
+    public OrientationPointerListener getOrientationPointerListener() {
+        if (orientationPointerListener == null) {
+            orientationPointerController = new OrientationPointerController(context);
+
+            orientationPointerListener = new OrientationPointerListener() {
+
+                /*
+                private MoveCameraAction getMoveCameraAction() {
+                    return MapViewerSingleton.getViewerInstance().moveCameraAction;
+                }
+                 */
+
+                @Override
+                public void start() {
+                    // getMoveCameraAction().setContinuousTracking(true);
+                    orientationPointerController.start();
+                }
+
+                @Override
+                public void stop() {
+                    // getMoveCameraAction().setContinuousTracking(false);
+                    orientationPointerController.stop();
+                }
+            };
+        }
+        return orientationPointerListener;
+    }
+
+    private volatile LocationManager locationManager;
+
+    private void ensureLocationManager() {
+        if (locationManager == null) {
+            synchronized (this) {
+                if (locationManager == null) {
+                    locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+                }
+            }
+        }
+    }
+
+    /**
+     * Offers the location settings if location is switched off on the device. {@code onCancel}
+     * runs if the reader declines, or dismisses the dialog.
+     *
+     * @return whether the dialog was shown
+     */
+    public boolean promptIfLocationNotEnabled(Context locContext, Runnable onCancel) {
+        ensureLocationManager();
+
+        boolean has_gps_loc = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+        boolean has_network_loc = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+
+        if(!(has_gps_loc || has_network_loc)) {
+            final boolean[] toSettings = {false};
+            AlertDialog dialog = show(new AlertDialog.Builder((locContext == null)? mainActivity : locContext)
+                    .setMessage(s("Location_not_enabled"))
+                    .setPositiveButton(
+                            s("ask_open_location_settings"),
+                            (paramDialogInterface, paramInt) -> {
+                                toSettings[0] = true;
+                                Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                context.startActivity(intent);
+                            })
+                    .setNegativeButton(s("Cancel"), null)
+                    .setOnDismissListener(d -> {
+                        if (!toSettings[0]) {
+                            onCancel.run();
+                        }
+                    }));
+            return dialog != null;
+        }
+        return false;
+    }
+
+    @Override
+    public void openMapDataDownloadChooser() {
+        super.openMapDataDownloadChooser();
+    }
+
+    @Override
+    public CurrentLocationListener getCurrentLocationListener() {
+        return getCurrentLocationListener(null);
+    }
+
+    public static void showLocationSettingsDialog(Context context) {
+        AlertDialog.Builder dialogBuilder = new AlertDialog.Builder(context);
+        dialogBuilder.setTitle(s("Location_permission_missing"));
+        dialogBuilder.setMessage(s("Location_permissions_in_device_settings_are_advised_to_use_app"));
+        dialogBuilder.setPositiveButton(s("Open_settings"), (dialog, which) -> {
+            // The app's own page, where its permissions are: the device's location page, which
+            // this opened, only switches location on and off, and grants nothing.
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            intent.setData(Uri.fromParts("package", context.getPackageName(), null));
+            context.startActivity(intent);
+        });
+        dialogBuilder.setNegativeButton(s("Cancel"), (dialog, which) -> dialog.dismiss());
+        locationSettingsDialog = show(dialogBuilder);
+    }
+
+    public static void showCameraSettingsDialog(Context context) {
+        AlertDialog.Builder dialogBuilder = new AlertDialog.Builder(context);
+        dialogBuilder.setTitle(s("Camera_permission_missing"));
+        dialogBuilder.setMessage(s("Camera_permission_needed_to_take_pictures"));
+        dialogBuilder.setPositiveButton(s("Open_settings"), (dialog, which) -> {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            Uri uri = Uri.fromParts("package", context.getPackageName(), null);
+            intent.setData(uri);
+            context.startActivity(intent);
+        });
+        dialogBuilder.setNegativeButton(s("Cancel"), (dialog, which) -> dialog.dismiss());
+        show(dialogBuilder);
+    }
+
+    /**
+     * Shows a dialog if its activity can still show one; null if not. A dialog asked for from
+     * a late callback - a position fix, a photo decoded after the user left the app - came
+     * to an activity already finished or destroyed, and show() threw BadTokenException on the
+     * main thread: the app ended.
+     */
+    public static AlertDialog show(AlertDialog.Builder builder) {
+        Context owner = builder.getContext();
+        while (owner instanceof android.content.ContextWrapper && !(owner instanceof Activity)) {
+            owner = ((android.content.ContextWrapper) owner).getBaseContext();
+        }
+        if (owner instanceof Activity) {
+            Activity activity = (Activity) owner;
+            if (activity.isFinishing() || activity.isDestroyed()) {
+                return null;
+            }
+        }
+        try {
+            AlertDialog dialog = builder.create();
+            dialog.show();
+            return dialog;
+        } catch (android.view.WindowManager.BadTokenException gone) {
+            return null;
+        }
+    }
+
+    /** How long a request for the position may keep the location providers searching. */
+    private static final long LOCATION_REQUEST_MILLIS = 90_000L;
+
+    /** How long a request waits for a first position before the reader is told there is none. */
+    private static final long NO_FIX_MILLIS = 15_000L;
+
+    public CurrentLocationListener getCurrentLocationListener(Activity locContext) {
+        ensureLocationManager();
+
+        CurrentLocationListener currentLocationListener = new CurrentLocationListener() {
+
+            @Override
+            public void getCurrentLocation(CurrentLocationCallback currentLocationCallback) {
+                if (ActivityCompat.checkSelfPermission(
+                        context, ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+                        && ActivityCompat.checkSelfPermission(context, ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+
+                    return;
+                }
+
+                final int movesAtRequest = getC().L == null ? 0 : getC().L.getMovesByUser();
+                // Whether a position was handed over, or the question otherwise settled; set
+                // and read on the main thread, where both the fixes and the timeout arrive.
+                final boolean[] answered = {false};
+                final Runnable unavailable = () -> {
+                    if (answered[0] || (getC().L != null && getC().L.getMovesByUser() != movesAtRequest)) {
+                        return;
+                    }
+                    answered[0] = true;
+                    locationUnavailable(currentLocationCallback);
+                };
+
+                // Location switched off: declining to switch it on is the same as no fix.
+                boolean offSettingsShown = promptIfLocationNotEnabled(locContext, unavailable);
+
+                if (locationSettingsDialog != null) {
+                    locationSettingsDialog.hide();
+                }
+
+                LocationListener locationListener = new LocationListener() {
+                    @Override
+                    public void onLocationChanged(@NonNull Location location) {
+                        if (getC().L != null && getC().L.getMovesByUser() != movesAtRequest) {
+                            // The user went elsewhere while this waited: a fix now would take
+                            // the camera back. Nothing more is asked for.
+                            locationManager.removeUpdates(this);
+                            return;
+                        }
+                        answered[0] = true;
+                        float lon = (float) location.getLongitude();
+                        float lat = (float) location.getLatitude();
+                        // On the render thread, as iOS delivers: the callbacks move the camera.
+                        com.badlogic.gdx.Gdx.app.postRunnable(() -> currentLocationCallback.setCurrentLocation(lon, lat));
+                        if (location.getProvider().equals(LocationManager.GPS_PROVIDER)) {
+                            locationManager.removeUpdates(this);
+                        }
+                    }
+
+                    @Override
+                    public void onFlushComplete(int requestCode) {
+                    }
+
+                    @Override
+                    public void onLocationChanged(@NonNull List<Location> locations) {
+                        final int size = locations.size();
+                        for (int i = 0; i < size; i++) {
+                            onLocationChanged(locations.get(i));
+                        }
+                    }
+
+                    @Override
+                    public void onProviderEnabled(@NonNull String provider) {
+                    }
+
+                    @Override
+                    public void onProviderDisabled(@NonNull String provider) {
+                    }
+
+                    @Override
+                    public void onStatusChanged(String provider, int status, Bundle extras) {
+                    }
+                };
+                // Only ask providers the device has: asking a missing one (no "network" provider on
+                // devices without Google services, or on the emulator) throws and crashes the app.
+                // The GPS one only with precise access: given "approximate", asking it throws too.
+                List<String> providers = locationManager.getAllProviders();
+                boolean hasGps = providers.contains(LocationManager.GPS_PROVIDER)
+                        && ActivityCompat.checkSelfPermission(context, ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                boolean hasNetwork = providers.contains(LocationManager.NETWORK_PROVIDER);
+                // Android 12's own "fused" provider, where one of those two is missing: without
+                // Google's services there is often no network provider, and with approximate
+                // access there is no GPS one, so a de-Googled phone given "approximate" had no
+                // source at all. The fused one answers there, blurred to the access given.
+                boolean hasFused = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                        && providers.contains(LocationManager.FUSED_PROVIDER)
+                        && !(hasGps && hasNetwork);
+                Location lastKnownLocation = hasGps ? locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER) : null;
+                if (lastKnownLocation == null && hasNetwork) {
+                    lastKnownLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                }
+                if (lastKnownLocation == null && hasFused) {
+                    lastKnownLocation = locationManager.getLastKnownLocation(LocationManager.FUSED_PROVIDER);
+                }
+                if (lastKnownLocation != null) {
+                    locationListener.onLocationChanged(lastKnownLocation);
+                }
+                if (hasNetwork) {
+                    locationManager.requestSingleUpdate(LocationManager.NETWORK_PROVIDER, locationListener, null);
+                }
+                if (hasGps) {
+                    locationManager.requestSingleUpdate(LocationManager.GPS_PROVIDER, locationListener, null);
+                }
+                if (hasFused) {
+                    locationManager.requestSingleUpdate(LocationManager.FUSED_PROVIDER, locationListener, null);
+                }
+                // Bounded: removed only by a GPS fix, which indoors never comes, the request
+                // kept the GPS searching for as long as the app ran.
+                android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+                main.postDelayed(() -> locationManager.removeUpdates(locationListener), LOCATION_REQUEST_MILLIS);
+                // No position in a while, and none known from before: the reader is not left
+                // waiting in silence. With location off, the dialog above settles it instead.
+                if (!offSettingsShown) {
+                    main.postDelayed(unavailable, NO_FIX_MILLIS);
+                }
+            }
+
+        };
+        return currentLocationListener;
+    }
+
+    @Override
+    public void askForDownloadScreen(double lat, double lon) {
+        runOnUiThread(() -> {
+            GoToDownloadDialog fragment = new GoToDownloadDialog((float) lat, (float) lon);
+            openFragmentWithTransaction(fragment, "go_to_download_dialog");
+        });
+    }
+
+    @Override
+    public void chooseSkyTime() {
+        mainActivity.runOnUiThread(() -> {
+            com.peaknav.sky.SkyModel sky = com.peaknav.utils.PeakNavUtils.getC().skyModel;
+            java.util.Calendar cal = java.util.Calendar.getInstance();
+            cal.setTimeInMillis(sky.currentTimeMillis());
+            // Force the OS Material dialog theme so the pickers render as the modern calendar and
+            // clock-face widgets, not the spinner "buttons" the app's GdxTheme falls back to. Follow
+            // the device's dark/light setting on Android 10+ (Q); a light dialog before that.
+            int pickerTheme = (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                    && (mainActivity.getResources().getConfiguration().uiMode
+                        & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                        == android.content.res.Configuration.UI_MODE_NIGHT_YES)
+                    ? android.R.style.Theme_Material_Dialog
+                    : android.R.style.Theme_Material_Light_Dialog;
+            android.app.DatePickerDialog dateDlg = new android.app.DatePickerDialog(mainActivity, pickerTheme,
+                    (view, year, month, day) -> {
+                        android.app.TimePickerDialog timeDlg = new android.app.TimePickerDialog(mainActivity,
+                                pickerTheme,
+                                (tv, hour, minute) -> {
+                                    java.util.Calendar c = java.util.Calendar.getInstance();
+                                    c.set(year, month, day, hour, minute, 0);
+                                    c.set(java.util.Calendar.MILLISECOND, 0);
+                                    long millis = c.getTimeInMillis();
+                                    com.badlogic.gdx.Gdx.app.postRunnable(() -> sky.setCustomTimeMillis(millis));
+                                },
+                                cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE), true);
+                        timeDlg.show();
+                    },
+                    cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH),
+                    cal.get(java.util.Calendar.DAY_OF_MONTH));
+            dateDlg.setButton(android.app.DatePickerDialog.BUTTON_NEUTRAL,
+                    s("Sky_time_device_clock"), (dialog, which) ->
+                            com.badlogic.gdx.Gdx.app.postRunnable(sky::clearCustomTime));
+            dateDlg.show();
+        });
+    }
+
+    @Override
+    public void makeToast(String message) {
+        mainActivity.runOnUiThread(() -> Toast.makeText(context, message, Toast.LENGTH_LONG).show());
+    }
+
+    @Override
+    public void shareSnapshot(Pixmap pixmap, com.peaknav.utils.SnapshotInfo info) {
+        PixmapIO.PNG writer = new PixmapIO.PNG(pixmap.getWidth() * pixmap.getHeight());
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        try {
+            try {
+                writer.write(outputStream, pixmap);
+            } finally {
+                writer.dispose();
+                pixmap.dispose();
+            }
+            byte[] bytesPng = outputStream.toByteArray();
+            Bitmap bitmap = BitmapFactory.decodeByteArray(bytesPng, 0, bytesPng.length);
+            if (bitmap == null) {
+                throw new IOException("the snapshot could not be decoded");
+            }
+
+            // Encoded to memory first, so the view's position and pose go into the file's
+            // EXIF block before it is written out.
+            ByteArrayOutputStream jpegStream = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, jpegStream);
+            byte[] jpeg = jpegStream.toByteArray();
+            if (info != null) {
+                jpeg = com.peaknav.utils.ExifWriter.embedInJpeg(jpeg, info);
+            }
+
+            Intent intentShare = new Intent(Intent.ACTION_SEND);
+            intentShare.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            intentShare.setType("image/jpeg");
+
+            Uri uri = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                    ? snapshotInMediaStore(jpeg) : snapshotInCache(jpeg);
+
+            intentShare.putExtra(Intent.EXTRA_STREAM, uri);
+            intentShare.setClipData(android.content.ClipData.newRawUri("", uri));
+            intentShare.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent intentChooser = Intent.createChooser(intentShare, "Share This Image");
+            intentChooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityAndPause(intentChooser);
+        } catch (IOException | RuntimeException e) {
+            // Said, not thrown: this runs on a worker, where an exception went nowhere, and
+            // the share button showed "Loading..." and then nothing.
+            e.printStackTrace();
+            makeToast(s("Save_failed"));
+        }
+    }
+
+    /** Android 10 and later: the picture among the device's images, which needs no permission there. */
+    private Uri snapshotInMediaStore(byte[] jpeg) throws IOException {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Images.Media.TITLE, "title");
+        values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+        Uri uri = context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                values);
+        if (uri == null) {
+            throw new IOException("no place for the snapshot among the images");
+        }
+        OutputStream bytes = context.getContentResolver().openOutputStream(uri);
+        if (bytes == null) {
+            throw new IOException("the snapshot's place cannot be written");
+        }
+        try {
+            bytes.write(jpeg);
+        } finally {
+            bytes.close();
+        }
+        return uri;
+    }
+
+    /**
+     * Android 9 and older, where writing among the device's images takes a storage permission
+     * the app does not ask for: the picture in the cache's "shared" folder, handed over through
+     * the app's FileProvider as a shared GPX is. The one before it is removed.
+     */
+    private Uri snapshotInCache(byte[] jpeg) throws IOException {
+        java.io.File dir = new java.io.File(context.getCacheDir(), "shared");
+        dir.mkdirs();
+        java.io.File[] old = dir.listFiles();
+        if (old != null) {
+            for (java.io.File file : old) {
+                if (file.getName().startsWith("PeakNav_") && file.getName().endsWith(".jpg")) {
+                    file.delete();
+                }
+            }
+        }
+        String stamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.ENGLISH)
+                .format(new java.util.Date());
+        java.io.File file = new java.io.File(dir, "PeakNav_" + stamp + ".jpg");
+        OutputStream out = new java.io.FileOutputStream(file);
+        try {
+            out.write(jpeg);
+        } finally {
+            out.close();
+        }
+        return androidx.core.content.FileProvider.getUriForFile(
+                context, context.getPackageName() + ".mountains.files", file);
+    }
+
+    /**
+     * The system share sheet with the track as a .gpx file: written to the cache's "shared"
+     * folder, and handed over through the app's FileProvider with read permission granted, so
+     * any app - Files, Drive, a hiking app, mail - can take it, on every Android version.
+     */
+    @Override
+    public void shareGpx(final String fileName, final String xml) {
+        if (xml == null) {
+            return;
+        }
+        try {
+            java.io.File dir = new java.io.File(context.getCacheDir(), "shared");
+            dir.mkdirs();
+            java.io.File file = new java.io.File(dir, fileName);
+            OutputStream out = new java.io.FileOutputStream(file);
+            try {
+                out.write(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } finally {
+                out.close();
+            }
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                    context, context.getPackageName() + ".mountains.files", file);
+            Intent intentShare = new Intent(Intent.ACTION_SEND);
+            intentShare.setType("application/gpx+xml");
+            intentShare.putExtra(Intent.EXTRA_STREAM, uri);
+            intentShare.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent intentChooser = Intent.createChooser(intentShare, s("Share_gpx"));
+            intentChooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityAndPause(intentChooser);
+        } catch (IOException | IllegalArgumentException e) {
+            makeToast(s("Save_failed"));
+        }
+    }
+
+    public void runOnUiThread(Runnable action) {
+        mainActivity.runOnUiThread(action);
+    }
+}

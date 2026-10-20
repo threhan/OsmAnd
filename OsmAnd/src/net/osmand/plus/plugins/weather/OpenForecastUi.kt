@@ -119,10 +119,10 @@ object OpenForecastUi {
                 edit(activity, place, lat, lon, source) { showPlaces(activity) }
             }.create()
         dialog.show()
-        app.weatherHelper.openForecastData.request(source,listOf(LatLon(lat,lon))) { result,error ->
-            if (!dialog.isShowing || activity.isDestroyed || activity.isFinishing) return@request
+        app.weatherHelper.openForecastData.requestComparison(source,LatLon(lat,lon)) { result,error ->
+            if (!dialog.isShowing || activity.isDestroyed || activity.isFinishing) return@requestComparison
             val f = result?.firstOrNull()
-            if (f == null) { text.text = error; return@request }
+            if (f == null) { text.text = error; return@requestComparison }
             val date = SimpleDateFormat("MM-dd HH:mm",Locale.getDefault())
             fun value(name: String,time: Long) = f.value(name,time)?.let { String.format(Locale.getDefault(),"%.1f",it) } ?: "—"
             val builder = StringBuilder(activity.getString(R.string.open_weather_attribution)).append("\n")

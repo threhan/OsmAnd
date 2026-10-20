@@ -1,0 +1,826 @@
+package com.peaknav.viewer.screens;
+
+import static com.peaknav.compatibility.PeakNavAppState.getAppState;
+import static com.peaknav.utils.Constants.peakNavGrey;
+import static com.peaknav.utils.PeakNavUtils.getC;
+import static com.peaknav.utils.PeakNavUtils.s;
+import static com.peaknav.utils.PreferencesManager.P;
+import static com.peaknav.utils.Units.deg2rad;
+
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.InputMultiplexer;
+import com.badlogic.gdx.Screen;
+import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.Texture;
+import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.glutils.ImmediateModeRenderer;
+import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.Interpolation;
+import com.badlogic.gdx.scenes.scene2d.Actor;
+import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.scenes.scene2d.ui.Button;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
+import com.badlogic.gdx.scenes.scene2d.ui.Label;
+import com.badlogic.gdx.scenes.scene2d.ui.Table;
+import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
+import com.badlogic.gdx.utils.viewport.ExtendViewport;
+import com.peaknav.utils.Units;
+import com.peaknav.viewer.MapApp;
+import com.peaknav.viewer.widgets.WidgetGetter;
+
+public class IntroScreen implements Screen {
+    SpriteBatch spriteBatch;
+    Stage stage;
+
+    /** The welcome screen's stage, which the first-run download chooser is laid over. */
+    public Stage getStage() {
+        return stage;
+    }
+    private MapApp mapApp;
+    private LabelLoading labelLoading;
+    private InputMultiplexer multiplexer;
+    private Table tableDownloadMap;
+    private Texture ic_launcher_texture;
+    private Table tableCentral;
+    private Label labelDownloadState;
+    private ShapeRenderer shapeRenderer;
+    private float radius = 30f;
+    private boolean downloadStarted = false;
+    private float timeElapsed = 0.0f;
+    private final Color colorOuterRot = new Color(1f, 0f, 0f, 0.4f);
+    private final Color colorProgress = new Color(0f, 0f, 1.0f, 0.4f);
+    private float widgetUnitStep;
+    private float radius1, radius2;
+    // private Timer.Task timer;
+    private Drawable[] downloadButtonIcons;
+    private Button buttonDM;
+
+    public IntroScreen(MapApp mapApp) {
+
+        this.mapApp = mapApp;
+    }
+
+    public void triggerMapDataDownloaded() {
+        if (tableDownloadMap != null) {
+            tableDownloadMap.setVisible(false);
+        }
+        // Not again when the map is already on: Game.setScreen hides and shows even the same
+        // screen, and the app now starts on the map when there is data (MapApp.create).
+        if (mapApp.getScreen() != mapApp.mapViewerScreen) {
+            mapApp.setScreen(mapApp.mapViewerScreen);
+        }
+        if (labelDownloadState != null) {
+            labelDownloadState.setText("Download complete!");
+            refreshStatePlate();
+        }
+    }
+
+    /**
+     * Nothing could be fetched: the screen as it was before the download, its button there to
+     * try again, with the reason over the terms above it. Render thread.
+     */
+    public void triggerMapDataDownloadFailed() {
+        downloadStarted = false;
+        downloadPercentShown = -1;
+        if (labelDownloadState != null) {
+            // Said above the terms, not in the state's place under the logo: the terms come
+            // back with the button, and on a wide screen the two met in the middle of it.
+            labelDownloadState.setText("");
+            refreshStatePlate();
+        }
+        showDownloadFailure(true);
+        if (tableDownloadMap != null) {
+            tableDownloadMap.setVisible(true);
+        }
+    }
+
+    public void triggerMapDataDownloadStarted() {
+        showDownloadFailure(false);
+        if (labelDownloadState != null) {
+            labelDownloadState.setText(s("Download_in_progress"));
+            refreshStatePlate();
+        }
+        if (tableDownloadMap != null) {
+            // The terms and the button have done their work; the screen is the slideshow's now.
+            tableDownloadMap.setVisible(false);
+        }
+        downloadStarted = true;
+    }
+
+    /** Pictures of the app while the first download runs; see SlideShow. */
+    private com.peaknav.viewer.widgets.SlideShow slideShow;
+    /** The cell the pictures sit in when the screen is taller than it is wide. */
+    private com.badlogic.gdx.scenes.scene2d.ui.Cell<Table> slideCell;
+    /** Where the pictures go when it is wider than it is tall: behind everything, filling it. */
+    private Table backgroundPicture;
+    private Table landscapeCaption, captionPlate;
+    private Label labelWelcome;
+    private Table welcomePlate;
+    /** The box behind "downloading" and its percentage, whichever way up the screen is held. */
+    private Table statePlate;
+    /** The medallion the download's ring and its running beads are drawn around. */
+    private Image logoImage;
+    private final com.badlogic.gdx.math.Vector2 logoCentre = new com.badlogic.gdx.math.Vector2();
+    /** The terms and links, on their own plate; tableDownloadMap fills the screen and cannot carry one. */
+    private Table termsPlate;
+    /** Why the last download fetched nothing, at the head of the terms' plate while it applies. */
+    private Label labelDownloadFailed;
+    private com.badlogic.gdx.scenes.scene2d.ui.Cell<Label> downloadFailedCell;
+    /** The cell over the terms where the caption sits on a tall screen. */
+    private com.badlogic.gdx.scenes.scene2d.ui.Cell<Table> captionRow;
+    /** The title's and the logo's cells, so they can sit lower on a tall screen. */
+    private com.badlogic.gdx.scenes.scene2d.ui.Cell<Table> welcomeCell;
+    private com.badlogic.gdx.scenes.scene2d.ui.Cell<Table> stateCell;
+    private com.badlogic.gdx.scenes.scene2d.ui.Cell<Image> logoCell;
+    /** Which way the screen was last laid out, so the change is noticed once and acted on once. */
+    private boolean laidOutWide = false;
+
+    /**
+     * True when this screen was opened to be looked at rather than waited on: the debug build's
+     * button (see WidgetGetter). The screen normally hands over to the map as soon as the data
+     * is loaded, which with data already downloaded means at once; in preview it stays until it
+     * is tapped. What it shows is a first run's own screen - the terms, the button and the
+     * pointers at it; the slideshow belongs to a download actually running.
+     */
+    private boolean preview = false;
+
+    /**
+     * Arranges the screen for its shape. The picture fills it either way up - it is what this
+     * screen is for, and a picture boxed in the middle of a column said less than the words
+     * around it - so everything written over it carries a dark plate, the only way a line is
+     * readable over whatever the picture happens to show. What changes with the shape is where
+     * the caption sits: beside the button at the foot of a tall screen, in the corner of a wide
+     * one, where a line across the middle would cut the picture in half.
+     *
+     * <p>Called when the screen opens and on every resize, and it does its work only when the
+     * shape has changed - or turning the phone would rebuild the layout on every frame.
+     *
+     * @param force lay out even if the shape has not changed, as when the screen opens
+     */
+    private void applyOrientation(boolean force) {
+        boolean wide = stage.getWidth() > stage.getHeight();
+        if (!force && wide == laidOutWide) {
+            return;
+        }
+        laidOutWide = wide;
+        com.badlogic.gdx.scenes.scene2d.ui.Stack pictures = slideShow.getPictures();
+        com.badlogic.gdx.scenes.scene2d.ui.Stack captions = slideShow.getCaptions();
+        pictures.remove();
+        captions.remove();
+        captionPlate.remove();
+        backgroundPicture.clearChildren();
+        captionPlate.clearChildren();
+        landscapeCaption.clearChildren();
+        captionRow.setActor(null).size(0f, 0f);
+
+        com.badlogic.gdx.scenes.scene2d.utils.Drawable plate =
+                getC().widgetTextures.getUniformDrawable(new com.badlogic.gdx.graphics.Color(0f, 0f, 0f, 0.45f));
+        // The picture keeps its own shape and takes most of the width: nine tenths of a tall
+        // screen, where it is the whole point of the screen, three quarters of a wide one, where
+        // the title above it and the terms below it need the height more.
+        final float widthShare = wide ? 0.75f : 0.90f;
+        // How much height the words keep for themselves on a tall screen, where they stand above
+        // and below the picture. On a wide one they do not take a share of the height: the
+        // picture is three quarters of the width and three quarters of the height, whichever of
+        // the two comes out smaller, and the words live in the margins that leaves.
+        final float reservedUnits = 9.5f;
+        final boolean fromBothSides = wide;
+        slideShow.setScaling(com.badlogic.gdx.utils.Scaling.fit);
+        final com.badlogic.gdx.scenes.scene2d.ui.Value pictureWidth =
+                new com.badlogic.gdx.scenes.scene2d.ui.Value() {
+            @Override
+            public float get(com.badlogic.gdx.scenes.scene2d.Actor context) {
+                float byWidth = widthShare * stage.getWidth();
+                float byHeight = fromBothSides
+                        ? 0.75f * stage.getHeight() / 0.5625f
+                        : (stage.getHeight() - reservedUnits * widgetUnitStep) / 0.5625f;
+                return Math.max(4f * widgetUnitStep, Math.min(byWidth, byHeight));
+            }
+        };
+        com.badlogic.gdx.scenes.scene2d.ui.Value pictureHeight =
+                new com.badlogic.gdx.scenes.scene2d.ui.Value() {
+            @Override
+            public float get(com.badlogic.gdx.scenes.scene2d.Actor context) {
+                return pictureWidth.get(context) * 0.5625f;   // the pictures' own 16:9
+            }
+        };
+        backgroundPicture.center();
+        backgroundPicture.add(pictures).width(pictureWidth).height(pictureHeight).row();
+        backgroundPicture.setVisible(true);
+        captionPlate.add(captions).growX().pad(0.2f * widgetUnitStep);
+
+        if (wide) {
+            // The words that stand on the picture carry a plate: a line of text is not readable
+            // over whatever the picture happens to show. The title is not one of them - it sits
+            // above the picture, on the screen's own background, and a plate there is a box
+            // around a word that needed none.
+            welcomePlate.setBackground((com.badlogic.gdx.scenes.scene2d.utils.Drawable) null);
+            termsPlate.setBackground(plate);
+            // The caption stands beside the picture, not on it: in the margin the three-quarter
+            // width leaves free, down in the corner, where nothing is behind it to hide it and
+            // so nothing has to be laid over the picture to make it readable.
+            captionPlate.setBackground((com.badlogic.gdx.scenes.scene2d.utils.Drawable) null);
+            landscapeCaption.setVisible(true);
+            landscapeCaption.bottom().left();
+            landscapeCaption.add(captionPlate).padLeft(0.3f * widgetUnitStep)
+                    .padBottom(0.6f * widgetUnitStep)
+                    .width(new com.badlogic.gdx.scenes.scene2d.ui.Value() {
+                        @Override
+                        public float get(com.badlogic.gdx.scenes.scene2d.Actor context) {
+                            float margin = 0.5f * (stage.getWidth() - pictureWidth.get(context));
+                            return Math.max(3.5f * widgetUnitStep, margin - 0.8f * widgetUnitStep);
+                        }
+                    });
+            welcomeCell.padTop(0.15f * widgetUnitStep);
+            logoCell.padTop(0.5f * widgetUnitStep);
+            stateCell.padTop(0.9f * widgetUnitStep);   // clear of the ring drawn around the logo
+        } else {
+            // Nothing sits on the picture here, so nothing needs a plate behind it; the caption
+            // belongs under the picture it describes, a finger's width below it.
+            welcomePlate.setBackground((com.badlogic.gdx.scenes.scene2d.utils.Drawable) null);
+            termsPlate.setBackground((com.badlogic.gdx.scenes.scene2d.utils.Drawable) null);
+            captionPlate.setBackground((com.badlogic.gdx.scenes.scene2d.utils.Drawable) null);
+            landscapeCaption.setVisible(false);
+            backgroundPicture.add(captionPlate).width(pictureWidth)
+                    .padTop(0.25f * widgetUnitStep).row();
+            welcomeCell.padTop(1.4f * widgetUnitStep);
+            logoCell.padTop(0.6f * widgetUnitStep);
+            stateCell.padTop(0.9f * widgetUnitStep);
+        }
+        slideCell.setActor(null).size(0f, 0f);
+        refreshStatePlate();
+
+        slideShow.invalidate();
+        tableCentral.invalidateHierarchy();
+        tableDownloadMap.invalidateHierarchy();
+        backgroundPicture.invalidateHierarchy();
+        landscapeCaption.invalidateHierarchy();
+    }
+
+    /** Opens the welcome screen as it looks on a first run, to be closed by a tap. Debug builds. */
+    public void showAsPreview() {
+        preview = true;
+        mapApp.setScreen(this);
+    }
+
+    @Override
+    public void show() {
+        int minSize = Math.min(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+        widgetUnitStep = Units.getWidgetUnitStep();
+        stage = new Stage(new ExtendViewport(minSize, minSize));
+        spriteBatch = new SpriteBatch();
+
+        labelLoading = mapApp.mapViewerScreen.labelLoading;
+
+        Label.LabelStyle labelStyleSmall = new Label.LabelStyle();
+        labelStyleSmall.font = getC().styleSingleton.getBitmapFontSmallWhite();
+
+        tableCentral = new Table();
+        tableCentral.setFillParent(true);
+        tableCentral.center().top();
+        Label.LabelStyle labelStyle = new Label.LabelStyle();
+        labelStyle.font = getC().styleSingleton.getBitmapFont();
+        labelWelcome = new Label(s("Welcome"), labelStyle);
+        labelWelcome.setAlignment(com.badlogic.gdx.utils.Align.center);
+        welcomePlate = new Table();
+        welcomePlate.add(labelWelcome).pad(0.15f * widgetUnitStep, 0.6f * widgetUnitStep,
+                0.15f * widgetUnitStep, 0.6f * widgetUnitStep);
+        // No fixed height: the plate is as tall as the word inside it, or the text rides above it.
+        welcomeCell = tableCentral.add(welcomePlate).padTop(0.4f*widgetUnitStep);
+        welcomeCell.row();
+        if (ic_launcher_texture == null) {
+            ic_launcher_texture = new Texture(Gdx.files.internal("icons/ic_launcher.png"));
+            // Drawn into a fixed cell well below the texture's own size, so without filtering
+            // the medallion's ring and tick marks alias into a jagged mess.
+            ic_launcher_texture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
+        }
+        logoImage = new Image(ic_launcher_texture);
+        logoCell = tableCentral.add(logoImage).width(2.76f*widgetUnitStep).height(2.76f*widgetUnitStep)
+                .padTop(0.3f*widgetUnitStep);
+        logoCell.row();
+
+        computeRadii();
+
+        labelDownloadState = new Label("", labelStyleSmall);
+        labelDownloadState.setAlignment(com.badlogic.gdx.utils.Align.center);
+        statePlate = new Table();
+        statePlate.add(labelDownloadState).pad(0.1f * widgetUnitStep, 0.4f * widgetUnitStep,
+                0.1f * widgetUnitStep, 0.4f * widgetUnitStep);
+        stateCell = tableCentral.add(statePlate);
+        stateCell.row();
+
+        // The slideshow, under the download's state. Running from the moment the screen opens,
+        // not only once a download does: the pictures are what says what the app is for, to
+        // someone deciding whether to press the button.
+        slideShow = new com.peaknav.viewer.widgets.SlideShow(widgetUnitStep, labelStyleSmall);
+        slideCell = tableCentral.add(slideShow.getTable());
+        slideCell.row();
+
+        // Turned on its side there is no room for a column of title, logo, picture, caption and
+        // terms: they ran over each other. The picture takes the whole screen instead, with the
+        // words over it - and everything written over a picture gets a dark plate behind it,
+        // which is the only way a line of text is readable over whatever the picture happens
+        // to show.
+        backgroundPicture = new Table();
+        backgroundPicture.setFillParent(true);
+        backgroundPicture.setVisible(false);
+        stage.addActor(backgroundPicture);
+
+        captionPlate = new Table();
+        landscapeCaption = new Table();
+        landscapeCaption.setFillParent(true);
+        landscapeCaption.bottom().right();
+        landscapeCaption.add(captionPlate).padRight(0.8f * widgetUnitStep)
+                .padBottom(3.2f * widgetUnitStep).width(8f * widgetUnitStep);
+        landscapeCaption.setVisible(false);
+        stage.addActor(landscapeCaption);
+
+        stage.addActor(tableCentral);
+
+        tableDownloadMap = new Table();
+        buttonDM = getC().widgetTextures.getButtonWithIcon("icons/icon_checkbox_download_data.png");
+        tableDownloadMap.setFillParent(true);
+        tableDownloadMap.center().bottom();
+        buttonDM.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                getC().submitExecutorGeneric(
+                        () -> {
+                            P.setCollectDownloadInfo(true);
+                            mapApp.nativeScreenCaller.openMapDataDownloadChooserWizard();
+                        });
+            }
+        });
+
+        downloadButtonIcons = new Drawable[2];
+        downloadButtonIcons[0] = buttonDM.getStyle().up;
+        downloadButtonIcons[1] = getC().widgetTextures.getTextureRegionDrawable("icons/icon_checkbox_download_data2.png");
+
+        // The terms and the links inside a plate of their own, not on tableDownloadMap itself:
+        // that one fills the screen, and a background on it would tint the whole picture.
+        termsPlate = new Table();
+        // The terms' width, whichever way up the screen is turned now.
+        com.badlogic.gdx.scenes.scene2d.ui.Value termsWidth = new com.badlogic.gdx.scenes.scene2d.ui.Value() {
+            @Override
+            public float get(com.badlogic.gdx.scenes.scene2d.Actor context) {
+                return licenseTextWidth();
+            }
+        };
+        // A failed download's reason, over the terms and wrapped at their width: on one line it
+        // was wider than the screen's middle, and on a wide screen it sat on top of the terms.
+        labelDownloadFailed = new Label(s("Download_failed"), labelStyleSmall);
+        labelDownloadFailed.setWrap(true);
+        labelDownloadFailed.setAlignment(com.badlogic.gdx.utils.Align.center);
+        downloadFailedCell = termsPlate.add(labelDownloadFailed).width(termsWidth);
+        downloadFailedCell.row();
+        showDownloadFailure(false);
+        termsPlate.add(getLicensePrivacy(labelStyleSmall)).width(termsWidth)
+                .pad(0.15f * widgetUnitStep).row();
+        termsPlate.add(getLicensePrivacyLinks()).padBottom(0.15f * widgetUnitStep).row();
+        // The caption goes here when the screen is tall; when it is wide it sits in the corner.
+        captionRow = tableDownloadMap.add();
+        captionRow.row();
+        tableDownloadMap.add(termsPlate).row();
+
+        // tableDownloadMap.add(labelDM).row();
+        tableDownloadMap.add(buttonDM).width(2*widgetUnitStep).height(2*widgetUnitStep).padBottom(0.5f*widgetUnitStep).row();
+
+        boolean firstTimeAppRun = P.isFirstTimeAppRun();
+        // Not over a download already running: one a previous run was closed during is taken up
+        // (MapViewerScreen.showOnce) before this screen is built.
+        tableDownloadMap.setVisible(firstTimeAppRun && !downloadStarted);
+
+        stage.addActor(tableDownloadMap);
+
+        shapeRenderer = new ShapeRenderer();
+        shapeRenderer.setProjectionMatrix(spriteBatch.getProjectionMatrix());
+
+        if (preview) {
+            // Nothing here is worth a button of its own in a build nobody ships: a tap anywhere
+            // outside the download button gives the map back.
+            stage.addListener(new com.badlogic.gdx.scenes.scene2d.InputListener() {
+                @Override
+                public boolean touchDown(com.badlogic.gdx.scenes.scene2d.InputEvent event,
+                                         float x, float y, int pointer, int button) {
+                    if (event.getTarget() == stage.getRoot() || event.getTarget() == tableCentral) {
+                        preview = false;
+                        mapApp.setScreen(mapApp.mapViewerScreen);
+                        return true;
+                    }
+                    return false;
+                }
+            });
+        }
+
+        applyOrientation(true);
+        slideShow.restart();   // a different run of pictures each time the screen opens
+
+        multiplexer = new InputMultiplexer();
+        multiplexer.addProcessor(stage);
+
+        Gdx.input.setInputProcessor(multiplexer);
+    }
+
+    private Table getLicensePrivacyLinks() {
+        Table links = new Table();
+        WidgetGetter.HyperlinkLabel termsLicense = new WidgetGetter.HyperlinkLabel(
+                s("License_link"), null, "https://peaknav.com/license_agreement.html");
+        WidgetGetter.HyperlinkLabel termsPrivacy = new WidgetGetter.HyperlinkLabel(
+                s("Privacy_link"), null, "https://peaknav.com/privacy_statement.html");
+        links.add(termsLicense).left().padRight(widgetUnitStep);
+        links.add(termsPrivacy).right();
+        return links;
+    }
+
+    /** Puts the failed download's reason over the terms, or takes it away, room and all. */
+    private void showDownloadFailure(boolean shown) {
+        if (downloadFailedCell == null) {
+            return;
+        }
+        labelDownloadFailed.setVisible(shown);
+        if (shown) {
+            downloadFailedCell.height(com.badlogic.gdx.scenes.scene2d.ui.Value.prefHeight)
+                    .padTop(0.15f * widgetUnitStep).padBottom(0.1f * widgetUnitStep);
+        } else {
+            downloadFailedCell.height(0f).padTop(0f).padBottom(0f);
+        }
+        termsPlate.invalidateHierarchy();
+    }
+
+    private Label getLicensePrivacy(Label.LabelStyle labelStyleSmall) {
+        Label licensePrivacy = new Label(s("Accept_license_and_privacy"), labelStyleSmall);
+        licensePrivacy.setWrap(true);
+        // Centred like everything else on this screen: wrapped text is left-aligned by default,
+        // which put the sentence off to one side of the links and the button below it.
+        licensePrivacy.setAlignment(com.badlogic.gdx.utils.Align.center);
+        licensePrivacy.setWidth(licenseTextWidth());
+        return licensePrivacy;
+    }
+
+    /** Most of the screen's width, but not a line across a whole tablet: ten button widths at most. */
+    private float licenseTextWidth() {
+        // Most of a tall screen's width, but only the middle of a wide one: the caption has the
+        // corner there, and a box across the whole foot of the screen sat on top of it.
+        float share = stage != null && stage.getWidth() > stage.getHeight() ? 0.45f : 0.8f;
+        return Math.min(stage != null ? stage.getWidth() * share : Gdx.graphics.getWidth() * share,
+                10 * widgetUnitStep);
+    }
+
+    private void computeRadii() {
+        radius = 1.5f*widgetUnitStep;
+        radius1 = radius - 0.2f*widgetUnitStep;
+        radius2 = radius + 0.3f*widgetUnitStep;
+    }
+
+    public void drawCompletionArc(float centerX, float centerY, float radius, float radius2, float degrees) {
+        int numSegments = Math.round(degrees/6+1);
+
+        float stepDegrees = degrees / numSegments;
+        float angleIter = 90f;
+
+        ImmediateModeRenderer renderer = shapeRenderer.getRenderer();
+
+        float prevX = centerX;
+        float prevX2 = centerX;
+        float prevY = centerY + radius;
+        float prevY2 = centerY + radius2;
+
+        for (int i = 0; i <= numSegments; i++) {
+            float cos = (float) Math.cos(angleIter*deg2rad);
+            float sin = (float) Math.sin(angleIter*deg2rad);
+            float x = centerX + radius * cos;
+            float y = centerY + radius * sin;
+            float x2 = centerX + radius2 * cos;
+            float y2 = centerY + radius2 * sin;
+
+            renderer.color(colorProgress);
+            renderer.vertex(prevX, prevY, 0);
+            renderer.color(colorProgress);
+            renderer.vertex(x, y, 0);
+            renderer.color(colorProgress);
+            renderer.vertex(x2, y2, 0);
+
+            renderer.color(colorProgress);
+            renderer.vertex(prevX, prevY, 0);
+            renderer.color(colorProgress);
+            renderer.vertex(x2, y2, 0);
+            renderer.color(colorProgress);
+            renderer.vertex(prevX2, prevY2, 0);
+
+            angleIter -= stepDegrees;
+            prevX = x;
+            prevY = y;
+            prevX2 = x2;
+            prevY2 = y2;
+        }
+
+    }
+
+    /**
+     * The ring of progress and the beads running round it, drawn around the logo wherever the
+     * layout has put it - the screen turned on its side moves the medallion, and a ring at a
+     * fixed distance from the top of the screen was left behind it.
+     */
+    private void drawCompletionDisk(float delta) {
+        if (logoImage == null || logoImage.getWidth() <= 0f) {
+            return;
+        }
+        logoImage.localToStageCoordinates(
+                logoCentre.set(logoImage.getWidth() / 2f, logoImage.getHeight() / 2f));
+        float x = logoCentre.x;
+        float y = logoCentre.y;
+
+        float smallRadius = 0.15f*radius;
+        float bigRadius = radius;
+
+        // int segments = 50; // Adjust the number of segments for smoother rotation
+        float completionAngle = 360f*getAppState().getMapDataDownloadProgressRatio();
+        timeElapsed += delta;
+        timeElapsed %= 2.f;
+        float outerRotAngle = -90f* Interpolation.circle.apply(
+                (timeElapsed > 1.f)? (2.f - timeElapsed) : timeElapsed);
+        outerRotAngle %= 360f;
+
+        shapeRenderer.setColor(colorOuterRot);
+        final int N = 8;
+        for (int i = 0; i < N; i++) {
+            float angle = deg2rad * (outerRotAngle + 360f*i/N);
+            shapeRenderer.circle(
+                    x+(smallRadius + bigRadius) * (float) Math.cos(angle),
+                    y+(smallRadius + bigRadius) * (float) Math.sin(angle),
+                    smallRadius);
+        }
+        shapeRenderer.setColor(colorProgress);
+        drawCompletionArc(x, y, radius1, radius2, completionAngle);
+    }
+
+    @Override
+    public void render(float delta) {
+
+        setDownloadButtonIcon(delta);
+        if (slideShow != null) {
+            slideShow.update(delta, true);
+        }
+        updateDownloadPercent();
+
+        Gdx.gl.glClearColor(peakNavGrey, peakNavGrey, peakNavGrey, 1);
+        Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
+        Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
+
+        // Not while no place has ever been chosen: "loaded" there is null island, with nothing
+        // on it to load, and the map it opened showed the ocean at 0° 0° with no way on but the
+        // search that pops up over it. The welcome screen, and its download button, is the way.
+        boolean noPlaceYet = P.getCoordinatesFirstTime() && getC().L.isCurrentLocationNotSet();
+        if (!preview && !noPlaceYet && labelLoading.getState() == LabelLoading.State.LOADED) {
+            // TODO: labelLoading.getState() may never be LOADED if no location permission was granted to the app
+            mapApp.setScreen(mapApp.mapViewerScreen);
+        }
+
+        spriteBatch.begin();
+        spriteBatch.end();
+
+        // Stage.draw does not apply its viewport itself, and this one is inset to the safe
+        // area: everything from here on is drawn in the stage's coordinates.
+        stage.getViewport().apply();
+        stage.act(delta);
+        // Not while the download chooser is open over this screen: the arrows point at a
+        // button it covers, and were drawn over the chooser's map.
+        boolean pointAtButton = !downloadStarted && tableDownloadMap.isVisible()
+                && !com.peaknav.viewer.mapscreens.MapScreens.isOpen();
+        pointerTime += delta;
+        if (pointAtButton) {
+            drawDownloadButtonPointers(false);
+        }
+        stage.draw();
+        if (pointAtButton) {
+            drawDownloadButtonPointers(true);
+        }
+        if (downloadStarted) {
+            // After the stage, not before it: drawn first, the ring and its beads went behind
+            // the slideshow's picture, which on a wide screen reaches up to the logo.
+            Gdx.gl.glEnable(GL20.GL_BLEND);
+            Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+            Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
+            shapeRenderer.setProjectionMatrix(stage.getCamera().combined);
+            shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+            drawCompletionDisk(delta);
+            shapeRenderer.end();
+            shapeRenderer.setProjectionMatrix(spriteBatch.getProjectionMatrix());
+            Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
+        }
+        Gdx.gl.glViewport(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+    }
+
+    /** Seconds the pointers have been animating; only the fraction of each period matters. */
+    private float pointerTime = 0f;
+    private static final float POINTER_PERIOD = 1.2f;
+    private static final float HALO_PERIOD = 1.6f;
+    private static final int POINTER_CHEVRONS = 3;
+    private final Color colorPointer = new Color(1f, 0.70f, 0.05f, 1f);
+    private final Color colorHalo = new Color(1f, 0.85f, 0.30f, 1f);
+    private final com.badlogic.gdx.math.Vector2 buttonCentre = new com.badlogic.gdx.math.Vector2();
+
+    /**
+     * Makes the download button hard to miss: many people did not see that the welcome screen
+     * waits for it. Behind the button ({@code front} false) a halo swells and fades; beside it
+     * ({@code front} true) chevrons slide in from both sides towards it, fading in and out as
+     * they go. Drawn in the stage's own coordinates, so they follow the button wherever the
+     * layout puts it.
+     */
+    private void drawDownloadButtonPointers(boolean front) {
+        float w = buttonDM.getWidth();
+        float h = buttonDM.getHeight();
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+        buttonDM.localToStageCoordinates(buttonCentre.set(w / 2f, h / 2f));
+        float cx = buttonCentre.x, cy = buttonCentre.y, r = Math.min(w, h) / 2f;
+        float u = widgetUnitStep;
+
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
+        shapeRenderer.setProjectionMatrix(stage.getCamera().combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        if (!front) {
+            float t = (pointerTime % HALO_PERIOD) / HALO_PERIOD;
+            float haloRadius = r * (1.05f + 0.3f * Interpolation.pow2Out.apply(t));
+            colorHalo.a = 0.55f * (1f - t);
+            shapeRenderer.setColor(colorHalo);
+            shapeRenderer.circle(cx, cy, haloRadius, 48);
+        } else {
+            float size = 0.32f * u;          // half the chevron's height
+            float stroke = 0.13f * u;
+            for (int i = 0; i < POINTER_CHEVRONS; i++) {
+                float t = ((pointerTime / POINTER_PERIOD) + (float) i / POINTER_CHEVRONS) % 1f;
+                // From 3.4 units out to just beside the button, fading in and back out.
+                float distance = r + (2.4f - 1.9f * t) * u;
+                colorPointer.a = (float) Math.sin(Math.PI * t);
+                shapeRenderer.setColor(colorPointer);
+                drawChevron(cx - distance, cy, size, stroke, 1f);    // left, pointing right
+                drawChevron(cx + distance, cy, size, stroke, -1f);   // right, pointing left
+            }
+        }
+        shapeRenderer.end();
+        shapeRenderer.setProjectionMatrix(spriteBatch.getProjectionMatrix());
+        Gdx.gl.glDisable(GL20.GL_BLEND);
+    }
+
+    /** A ">" with its tip at (tipX, y), or a "<" when {@code direction} is -1. */
+    private void drawChevron(float tipX, float y, float size, float stroke, float direction) {
+        float backX = tipX - direction * size;
+        shapeRenderer.rectLine(backX, y + size, tipX, y, stroke);
+        shapeRenderer.rectLine(backX, y - size, tipX, y, stroke);
+        shapeRenderer.circle(tipX, y, stroke / 2f, 12);
+    }
+
+    /**
+     * The plate behind "downloading" and its percentage, there only while there is something to
+     * read - an empty box would be a dark smudge in the middle of the screen.
+     *
+     * <p>Both ways up, unlike the terms' plate, which a tall screen leaves off: the terms sit in a
+     * column of their own below the picture, where the plain background is plate enough, but the
+     * download's state is the one thing on the screen that changes while the reader waits, and
+     * the shading marks it out as the status it is rather than one more line of the page.
+     */
+    private void refreshStatePlate() {
+        if (statePlate == null || stage == null) {
+            return;
+        }
+        boolean needed = labelDownloadState.getText().length() > 0;
+        statePlate.setBackground(needed
+                ? getC().widgetTextures.getUniformDrawable(
+                        new com.badlogic.gdx.graphics.Color(0f, 0f, 0f, 0.45f))
+                : null);
+    }
+
+    /** The percentage last written into the state label, so its text is only rebuilt on a change. */
+    private int downloadPercentShown = -1;
+
+    /** "Download in progress..." with how far it has got underneath, as the map screen shows it. */
+    private void updateDownloadPercent() {
+        if (!downloadStarted || labelDownloadState == null) {
+            return;
+        }
+        int percent = Math.max(0, Math.min(100,
+                (int) Math.floor(getAppState().getMapDataDownloadProgressRatio() * 100f)));
+        if (percent != downloadPercentShown) {
+            downloadPercentShown = percent;
+            labelDownloadState.setText(s("Download_in_progress") + "\n" + percent + "%");
+            refreshStatePlate();
+        }
+    }
+
+    private float cumDelta = 0f;
+    private int downloadButtonIconIndex = 0;
+    private void setDownloadButtonIcon(float delta) {
+        cumDelta += delta;
+        int index = ((int) (cumDelta / 0.750f)) % downloadButtonIcons.length;
+        if (downloadButtonIconIndex != index) {
+            downloadButtonIconIndex = index;
+            buttonDM.getStyle().up = downloadButtonIcons[downloadButtonIconIndex];
+        }
+
+    }
+
+    @Override
+    public void resize(int width, int height) {
+        // Inside the display's safe area, as the map screen's stage is: the search field of
+        // the place chooser opened over this screen was under the iPhone's camera. The insets
+        // are zero on desktop and on Android, where nothing changes.
+        int insetLeft = Gdx.graphics.getSafeInsetLeft();
+        int insetBottom = Gdx.graphics.getSafeInsetBottom();
+        int stageWidth = Math.max(1, width - insetLeft - Gdx.graphics.getSafeInsetRight());
+        int stageHeight = Math.max(1, height - insetBottom - Gdx.graphics.getSafeInsetTop());
+        if (!Units.isProportionalInterface() && stage.getViewport() instanceof ExtendViewport) {
+            // One stage unit per pixel, as on the map screen: no growing with the window.
+            ((ExtendViewport) stage.getViewport()).setMinWorldWidth(stageWidth);
+            ((ExtendViewport) stage.getViewport()).setMinWorldHeight(stageHeight);
+        }
+        stage.getViewport().update(stageWidth, stageHeight, true);
+        stage.getViewport().setScreenPosition(insetLeft, insetBottom);
+        applyOrientation(false);
+        // The picture's size is worked out from the stage, and scene2d only asks for it again
+        // when the layout is invalidated: without this the picture on screen when the phone
+        // turned kept its old shape until the next one arrived.
+        slideShow.invalidate();
+        // The terms' width follows the window too, which a resize keeping its shape (a desktop
+        // window dragged wider) would otherwise leave as it was when the screen opened.
+        termsPlate.invalidateHierarchy();
+        spriteBatch.getProjectionMatrix().setToOrtho2D(0, 0, width, height);
+        shapeRenderer.setProjectionMatrix(spriteBatch.getProjectionMatrix());
+
+        widgetUnitStep = Units.getWidgetUnitStep();
+        computeRadii();
+
+        Gdx.gl.glViewport(0, 0, width, height);
+    }
+
+    @Override
+    public void pause() {
+
+    }
+
+    @Override
+    public void resume() {
+
+    }
+
+    /**
+     * Once the map has taken over, what show() made goes: the stage, the batches, the logo and
+     * the slide show stayed allocated for the session. Next frame, not now: the switch is made
+     * from inside this screen's own frame, which goes on drawing after it.
+     */
+    @Override
+    public void hide() {
+        Gdx.app.postRunnable(() -> {
+            if (mapApp.getScreen() != this) {
+                // A place screen opened over this one goes to the map's stage first.
+                com.peaknav.viewer.mapscreens.MapScreens.screenChanged();
+                dispose();
+            }
+        });
+    }
+
+    /** See {@link MapViewerScreen#recoverFromRenderError()} — same blank-screen safeguard. */
+    public void recoverFromRenderError() {
+        MapViewerScreen.endBatchQuietly(spriteBatch);
+        try {
+            if (shapeRenderer != null && shapeRenderer.isDrawing()) {
+                shapeRenderer.end();
+            }
+        } catch (Throwable ignored) {
+        }
+        if (stage != null) {
+            MapViewerScreen.endBatchQuietly(stage.getBatch());
+        }
+    }
+
+    @Override
+    public void dispose() {
+        // Null guards: these are created in show(), which may never have run.
+        if (ic_launcher_texture != null) {
+            ic_launcher_texture.dispose();
+            ic_launcher_texture = null;
+        }
+        if (slideShow != null) {
+            slideShow.dispose();
+            slideShow = null;
+        }
+        if (shapeRenderer != null) {
+            shapeRenderer.dispose();
+            shapeRenderer = null;
+        }
+        if (spriteBatch != null) {
+            spriteBatch.dispose();
+            spriteBatch = null;
+        }
+        if (stage != null) {
+            stage.dispose();
+            stage = null;
+        }
+    }
+
+}

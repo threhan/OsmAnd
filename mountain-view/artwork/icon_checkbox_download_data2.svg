@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- "data2" is the alternate/active state of the download button: cloud shown as complete. -->
+<svg width="240" height="240" viewBox="0 0 240 240" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="disc"><circle cx="120" cy="120" r="120"/></clipPath>
+    <linearGradient id="cloud2" x1="0" y1="70" x2="0" y2="150" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8ad07a"/>
+      <stop offset="1" stop-color="#4f9b3f"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="120" cy="120" r="120" fill="#ffffff"/>
+  <g clip-path="url(#disc)">
+    <rect x="0" y="0" width="240" height="240" fill="#ecf6e8"/>
+
+    <path d="M74 150
+             a34 34 0 0 1 4 -67
+             a40 40 0 0 1 74 -6
+             a30 30 0 0 1 6 73 z"
+          fill="url(#cloud2)" stroke="#2f6a24" stroke-width="3" stroke-linejoin="round"/>
+
+    <!-- check mark (downloaded) -->
+    <path d="M96 120 L114 140 L150 96" fill="none" stroke="#ffffff"
+          stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="70" y="196" width="100" height="10" rx="4" fill="#2f6a24"/>
+  </g>
+  <circle cx="120" cy="120" r="118.5" fill="none" stroke="#2f6a24" stroke-width="3"/>
+</svg>

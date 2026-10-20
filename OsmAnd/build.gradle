@@ -294,3 +294,5 @@ afterEvaluate {
 		dependencies.add("opengldebugImplementation", "net.osmand:OsmAndCore_android:${remoteAarSnapshot}@aar")
 	}
 }
+
+dependencies { implementation project(':mountain-view') }

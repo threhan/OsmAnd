@@ -1,0 +1,427 @@
+package com.peaknav.viewer.controller;
+
+import static com.peaknav.compatibility.PeakNavAppState.getAppState;
+import static com.peaknav.database.CheckMissingData.checkMissingElevationForCoord;
+import static com.peaknav.utils.PeakNavUtils.getC;
+import static com.peaknav.utils.PeakNavUtils.getNativeScreenCaller;
+import static com.peaknav.utils.PreferencesManager.P;
+
+import com.peaknav.geo.LatLong;
+import com.peaknav.geo.LatLongUtils;
+
+import com.badlogic.gdx.math.Vector3;
+import com.peaknav.viewer.MapViewerSingleton;
+
+import java.util.LinkedList;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+
+public class CurrentLocation {
+
+    // public final Vector3 targetPosition = new Vector3();
+
+    private volatile boolean currentLocationNotSet;
+
+    private volatile float currentLatitude;
+    private volatile float currentLongitude;
+    /** Where to go once the tiles are updated, latitude and longitude, or null: set and taken whole. */
+    private final java.util.concurrent.atomic.AtomicReference<double[]> targetAfterUpdate =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    private enum LocationState {
+        NEVER_SET,
+        TARGETING,
+        WAITING_FOR_ELEVATION,
+        ELEVATION_SET
+    }
+    private volatile LocationState currentTerrainEleFired = LocationState.NEVER_SET;
+
+    /**
+     * The ground height under the target has been measured; put the camera on it.
+     *
+     * <p>Called from {@link com.peaknav.viewer.tiles.MapTile} when a tile that contains the
+     * target finishes loading its elevation image, having sampled the height <em>at the
+     * target</em>.
+     *
+     * <p>It must therefore place the camera at the target too. It used to pass
+     * {@code currentLatitude}/{@code currentLongitude}, which are only updated later, by
+     * {@code setCurrentFinalCoords} on a different path - so a tile finishing after a flight
+     * snapped the camera back to where the flight started, at the destination's ground
+     * height. Flying from Seattle to Mount Rainier ended with the camera back over Seattle.
+     */
+    public void setCurrentTerrainEle(float currentTerrainEle) {
+        currentTerrainEleFired = LocationState.ELEVATION_SET;
+        this.currentTerrainEle = currentTerrainEle;
+        // Keep the current position in step with what was just measured, rather than leaving
+        // it stale until the other path catches up.
+        currentLatitude = targetLatitude;
+        currentLongitude = targetLongitude;
+        currentLocationNotSet = false;
+        // On the render thread: this is called from the elevation loader when a tile holding
+        // the target lands, and what follows moves the camera, sets the elevation bar (whose
+        // change event moves the camera again and shows a toast) and shows or hides widgets -
+        // none of which may happen beside the frame being drawn.
+        final float lon = targetLongitude, lat = targetLatitude, ele = currentTerrainEle;
+        com.badlogic.gdx.Gdx.app.postRunnable(
+                () -> getC().getMapViewerScreen().setCurrentCoordLocation(lon, lat, ele));
+    }
+
+    private volatile float currentTerrainEle;
+
+    /**
+     * Sets the ground-elevation reference (used by the elevation bar and the height readout)
+     * without the side effects of {@link #setCurrentTerrainEle} — no re-entrant location callback,
+     * no camera move. Used when the camera is deliberately decoupled from the target, e.g. while
+     * surveying a GPX track from high above it, so the bar's range and readout track where the
+     * camera actually is.
+     */
+    public void setCurrentTerrainEleQuiet(float ele) {
+        this.currentTerrainEle = ele;
+    }
+
+    private float targetLatitude;
+    private float targetLongitude;
+
+    public final Executor executorSavePreferences = Executors.newSingleThreadExecutor();
+    private volatile boolean firstRun = true;
+    private boolean targetSetFromGPS = false;
+    // private Tile highwaysTileCenter;
+    // private final int highwaysTileRange = 8;
+
+    public CurrentLocation() {
+        currentLocationNotSet = true;
+    }
+
+    public void setCurrentTargetCoords(double lat, double lon) {
+        setCurrentTargetCoords(lat, lon, true);
+    }
+
+    public void setCurrentTargetCoordsFromGPS(double lat, double lon) {
+        setCurrentTargetCoords(lat, lon, true, true);
+    }
+
+    public void setCurrentTargetCoords(double lat, double lon, boolean checkMissing) {
+        setCurrentTargetCoords(lat, lon, checkMissing, false);
+    }
+
+    /**
+     * How far the target must move before it counts as a new destination rather than a re-fire of
+     * the current one. Internal flows re-target the same coordinates (tile updates via
+     * setCurrentTargetCoordsAfterTileUpdates, a finished fly via MoveCameraActionStep.end), and
+     * those must not cancel a scheduled camera path. About 11 m — far below any user-chosen move.
+     */
+    private static final double TARGET_MOVED_EPSILON_DEG = 1e-4;
+
+    /**
+     * Counts the times the target was moved somewhere new other than by a position fix: a
+     * search, a tap, a link. A location request remembers it, and a fix arriving after it
+     * changed is dropped - GPS can take minutes, and its fix took the camera back from
+     * wherever the user had gone meanwhile.
+     */
+    private volatile int movesByUser;
+
+    public int getMovesByUser() {
+        return movesByUser;
+    }
+
+    public void setCurrentTargetCoords(double lat, double lon, boolean checkMissing, boolean fromGps) {
+        if (!fromGps
+                && (Math.abs(lat - targetLatitude) > TARGET_MOVED_EPSILON_DEG
+                        || Math.abs(lon - targetLongitude) > TARGET_MOVED_EPSILON_DEG)) {
+            movesByUser++;
+        }
+        if (!fromGps
+                && (Math.abs(lat - targetLatitude) > TARGET_MOVED_EPSILON_DEG
+                        || Math.abs(lon - targetLongitude) > TARGET_MOVED_EPSILON_DEG)
+                && getC().getMapViewerScreen() != null) {
+            // A new destination takes over the camera: an orbit around a pinned point, a GPX tour
+            // or queued fly steps would keep steering it toward the old one and fight the move.
+            // GPS is exempt — a moving fix re-targets on every update, and cancelling there would
+            // make orbits and tours unusable whenever GPS following is active.
+            getC().getMapViewerScreen().cancelScheduledCameraPath();
+        }
+
+        currentTerrainEleFired = LocationState.TARGETING;
+
+        setTargetSetFromGPS(fromGps);
+
+        targetLatitude = (float) lat;
+        targetLongitude = (float) lon;
+
+        if (checkMissing) {
+            askToDownloadMissingData(lat, lon);
+        }
+        getC().elevationImageProviderManager.setProviderForTargetCoords(targetLatitude, targetLongitude);
+
+        getC().tileManager.updateMapTiles();
+
+        currentTerrainEleFired = LocationState.WAITING_FOR_ELEVATION;
+    }
+
+    /**
+     * How long after a download finishes the "data is missing" dialog stays suppressed. Tiles are
+     * still being written and re-read for a moment after the download ends, so without this the
+     * app asks to download data it has just fetched.
+     */
+    private static final long DOWNLOAD_SETTLE_MILLIS = 30_000L;
+
+    /**
+     * Raises the modal "download missing data?" dialog for this place, once, if it is wanted.
+     *
+     * <p>Two callers ask, at the two moments the answer is knowable. {@link #setCurrentTargetCoords}
+     * asks up front, from the files that ought to be on disk; the tile updater asks when it finds
+     * it cannot build anything for the target (see UpdateMapTilesRunnable), which is the moment the
+     * user actually sees nothing happen. Whichever gets there first marks the area asked-about, so
+     * the second is a no-op.
+     */
+    public void askToDownloadMissingData(double lat, double lon) {
+        if (!shouldAskToDownloadMissingData(lat, lon)) {
+            return;
+        }
+        // Remember that this area has been asked about before showing the dialog, so a moving
+        // GPS fix (which re-targets on every update) cannot raise it again and again.
+        getC().checkMissingData.dismiss(lat, lon);
+        getNativeScreenCaller().askForDownloadScreen(lat, lon);
+    }
+
+    /**
+     * Whether to raise the modal "download missing data?" dialog. This is deliberately much more
+     * reluctant than the in-app banner (see MapViewerScreen/TableDownloadData), which stays
+     * visible whenever data is missing and is the non-intrusive way to offer the download.
+     */
+    private boolean shouldAskToDownloadMissingData(double lat, double lon) {
+        if (getNativeScreenCaller() == null) {
+            // The headless renderer, and any platform yet to build a dialog.
+            return false;
+        }
+        if (getAppState().isMapDataDownloadStarted()
+                || getAppState().isMapDataDownloadRecentlyFinished(DOWNLOAD_SETTLE_MILLIS)) {
+            // A download is already running or has just covered this; asking now is the
+            // "it keeps asking even though I am downloading" case.
+            return false;
+        }
+        return getC().checkMissingData.checkMissingElevationIfNotDismissed(lat, lon);
+    }
+
+    public void setCurrentFinalCoords(double lat, double lon, double elevation) {
+        currentLatitude = (float) lat;
+        currentLongitude = (float) lon;
+        currentTerrainEle = (float) elevation;
+
+        currentLocationNotSet = false;
+
+        saveCoordinatesToPreferences(currentLatitude, currentLongitude);
+
+        if (getC().dataRetrieveThreadManager.isLabelUpdatesHeld()) {
+            // Held label updates freeze WHICH labels show; the code below is the arrival
+            // ritual that empties the visible and displayable lists and relies on the
+            // triggers - gated while held - to refill them. Running it emptied the screen
+            // on every landed video frame, with nothing allowed to repopulate until the
+            // next explicit refresh: labels blinked out for half-second stretches. The
+            // lists stay as they are; the per-frame reprojection keeps them placed, and
+            // the next refresh rebuilds them from fresh data.
+            return;
+        }
+
+        getC().dataRetrieveThreadManager.stopRunnableUpdateVisibility();
+        LatLong lastLatLong = getC().dataRetrieveThreadManager.getLastLatLong();
+        if (lastLatLong == null || LatLongUtils.distance(
+                lastLatLong, new LatLong(lat, lon)) > 0.05) {
+            getC().O.applyToAllListsOfPOIs((listOfPeaks, listOfNonPeaks) -> {
+                listOfPeaks.clear();
+                listOfNonPeaks.clear();
+            });
+            getC().redactAll();
+        } else {
+            getC().dataRetrieveThreadManager.triggerUpdateVisibilityPositionChanged();
+        }
+        getC().O.setDisplayablePoiList(null);
+        getC().O.setVisiblePoiList(null);
+
+        if (firstRun) {
+            synchronized (this) {
+                if (firstRun) {
+                    MapViewerSingleton.getViewerInstance().controller.target = new Vector3((float) getC().L.getCurrentLongitude(), (float) getC().L.getCurrentLatitude(), 0.05f);
+                    firstRun = false;
+                }
+            }
+        }
+
+        // TODO: MapViewerScreen callback
+        getC().getMapViewerScreen().setCurrentCoordLocation(
+                lon, lat, elevation
+        );
+
+        getC().mapDataManager.getMultiMapDataStore().resetCache();
+
+    }
+
+    public void saveCoordinatesToPreferences(double lat, double lon) {
+        executorSavePreferences.execute(() -> {
+            P.setLastLatitude(lat);
+            P.setLastLongitude(lon);
+            P.setCoordinatesFirstTime(false);
+        });
+    }
+
+    /*
+    public void setCurrentTerrainEle(double ele) {
+        currentTerrainEle = (float)ele;
+        getC().mapViewerScreen.cam.position.z = currentTerrainEle;
+        getC().mapViewerScreen.cam.update();
+    }
+     */
+
+    /**
+     * Lands the current position on the target with none of the arrival ritual: state
+     * and coordinates only - no camera action, no sky invalidation, no missing-data
+     * checks, no screen callback. For callers that place the camera themselves and
+     * need only the INVARIANT (current == target) to hold: the headless renderer's
+     * frame loop, where the full ritual measured six seconds a frame and none of it
+     * was wanted.
+     */
+    public void landOnTargetQuiet() {
+        currentTerrainEleFired = LocationState.ELEVATION_SET;
+        currentLatitude = targetLatitude;
+        currentLongitude = targetLongitude;
+        currentLocationNotSet = false;
+    }
+
+    /**
+     * Whether the last {@link #setCurrentTargetCoords} has fully landed: the target's
+     * ground elevation has been measured, the camera has been placed there, and the
+     * current coordinates equal the target coordinates. Until this is true the camera
+     * is still where the PREVIOUS target left it - so a frame captured now would be a
+     * frame of the wrong place. The headless renderer waits on this before every
+     * capture, including the fast frames that skip every other wait.
+     */
+    public boolean isTargetReached() {
+        return currentTerrainEleFired == LocationState.ELEVATION_SET
+                && (float) currentLatitude == targetLatitude
+                && (float) currentLongitude == targetLongitude;
+    }
+
+    public double getCurrentLatitude() {
+        if (currentLocationNotSet) {
+            return targetLatitude;
+        }
+        return currentLatitude;
+    }
+
+    public double getCurrentLongitude() {
+        if (currentLocationNotSet) {
+            return targetLongitude;
+        }
+        return currentLongitude;
+    }
+
+    public double getCurrentTerrainEle() {
+        return currentTerrainEle;
+    }
+
+    public LatLong getCurrentLatLong() {
+        return new LatLong(currentLatitude, currentLongitude);
+    }
+
+    public void loadCoordsFromLastPreferences() {
+        // don't load coordinates if app never used before:
+        if (!P.getCoordinatesFirstTime()) {
+            double lat = P.getLastLatitude();
+            double lon = P.getLastLongitude();
+            setCurrentTargetCoords(lat, lon);
+        }
+    }
+
+    public float getTargetLatitude() {
+        return targetLatitude;
+    }
+
+    public float getTargetLongitude() {
+        return targetLongitude;
+    }
+
+    public boolean isCurrentLocationNotSet() {
+        return currentLocationNotSet;
+    }
+
+    /*public void computeMapHighwaysDataBoundingBox() {
+        byte zoomHighways = 14;
+        TileId tileId = Units.getTileNumber(targetLatitude, targetLongitude, zoomHighways);
+        highwaysTileCenter = new Tile(tileId.x, tileId.y, zoomHighways, 1);
+    }*/
+
+    /*public Tile getHighwaysTileCenter() {
+        return highwaysTileCenter;
+    }
+
+    public int getHighwaysTileRange() {
+        return highwaysTileRange;
+    }*/
+
+    public boolean isTargetSetFromGPS() {
+        return targetSetFromGPS;
+    }
+
+    private void setTargetSetFromGPS(boolean targetSetFromGPS) {
+        this.targetSetFromGPS = targetSetFromGPS;
+    }
+
+    public LatLong getTargetLatLong() {
+        return new LatLong(getTargetLatitude(), getTargetLongitude());
+    }
+
+    public void setCurrentTargetCoordsAfterTileUpdates(double lat, double lon) {
+        targetAfterUpdate.set(new double[]{lat, lon});
+    }
+
+    /**
+     * Where the map was, and where it was sent, when it went to a place whose download was
+     * just starting: {fromLat, fromLon, toLat, toLon}. For {@link #dropTargetWaitingForDownload}.
+     */
+    private final java.util.concurrent.atomic.AtomicReference<double[]> movedForDownload =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    /**
+     * Goes to a place whose data is about to be downloaded, without asking about what is
+     * missing there, and remembers where from: stopping the download comes back.
+     */
+    public void setCurrentTargetCoordsForDownload(double lat, double lon) {
+        movedForDownload.set(currentLocationNotSet ? null
+                : new double[]{currentLatitude, currentLongitude, lat, lon});
+        setCurrentTargetCoords(lat, lon, false);
+    }
+
+    /**
+     * The download was stopped: gives up a place that was waiting for it. The one to go to when
+     * the download ends is forgotten; and a target already moved there when the download
+     * started goes back to where the map was, or the screen would stay on "loading" over a
+     * place that is not coming, or land on the part of it that did. Left alone if the map has
+     * landed there already, or the user has gone somewhere else since.
+     */
+    public void dropTargetWaitingForDownload() {
+        targetAfterUpdate.set(null);
+        double[] moved = movedForDownload.getAndSet(null);
+        if (moved == null) {
+            return;
+        }
+        if (Math.abs(moved[2] - targetLatitude) > TARGET_MOVED_EPSILON_DEG
+                || Math.abs(moved[3] - targetLongitude) > TARGET_MOVED_EPSILON_DEG) {
+            return;
+        }
+        if (currentTerrainEleFired == LocationState.ELEVATION_SET
+                && currentLatitude == targetLatitude && currentLongitude == targetLongitude) {
+            return;
+        }
+        setCurrentTargetCoords(moved[0], moved[1], false);
+        // The place screen saved the new place for the next start; that too.
+        saveCoordinatesToPreferences(moved[0], moved[1]);
+    }
+
+    public void checkTargetCoordsAfterTileUpdates() {
+        double[] target = targetAfterUpdate.getAndSet(null);
+        if (target != null) {
+            setCurrentTargetCoords(target[0], target[1]);
+        }
+    }
+
+}

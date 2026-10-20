@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="mv_app_name_releaseBundle">Mountain View</string>
+    <string name="mv_app_name_release">Mountain View</string>
+    <string name="mv_app_name_debug">Mountain View</string>
+    <string name="mv_download_selected_area">Download area</string>
+    <string name="mv_cancel_download_area">Back</string>
+    <string name="mv_search_title">Search</string>
+    <string name="mv_search">Search</string>
+
+    <string name="mv_shared_pref_launcher">sharedPrefLauncher</string>
+</resources>

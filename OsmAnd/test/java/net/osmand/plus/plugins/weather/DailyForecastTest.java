@@ -8,17 +8,19 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class DailyForecastTest {
-    private JSONObject fixture() throws Exception {
+    private JSONObject fixture() throws Exception { return fixture(7); }
+
+    private JSONObject fixture(int count) throws Exception {
         JSONObject daily = new JSONObject(), units = new JSONObject();
         JSONArray dates = new JSONArray();
-        for (int d = 1; d <= 7; d++) dates.put("2026-11-0" + d);
+        for (int d = 1; d <= count; d++) dates.put(String.format(java.util.Locale.US, "2026-11-%02d", d));
         daily.put("time", dates);
         String[] names = {"temperature_2m_max", "temperature_2m_min", "rain_sum", "showers_sum",
                 "precipitation_sum", "wind_gusts_10m_max", "wind_speed_10m_mean"};
         String[] labels = {"°C", "°C", "mm", "mm", "mm", "m/s", "m/s"};
         for (int i = 0; i < names.length; i++) {
             JSONArray values = new JSONArray();
-            for (int d = 0; d < 7; d++) values.put(i == 0 ? 15 : i == 1 ? -5 : 0);
+            for (int d = 0; d < count; d++) values.put(i == 0 ? 15 : i == 1 ? -5 : 0);
             daily.put(names[i], values); units.put(names[i], labels[i]);
         }
         return new JSONObject().put("timezone", "America/New_York").put("daily", daily).put("daily_units", units);
@@ -63,6 +65,20 @@ public class DailyForecastTest {
         j = fixture(); j.getJSONObject("daily").getJSONArray("time").put(2, "2026-11-05"); invalid(j);
         j = fixture(); j.put("timezone", "Not/AZone"); invalid(j);
         j = fixture(); j.getJSONObject("daily").getJSONArray("temperature_2m_min").put(0, 20); invalid(j);
+    }
+
+    @Test public void variableHorizonAndOldSnapshotsKeepMissingDaysUnknown() throws Exception {
+        for (int count : new int[]{8, 10, 15, 16}) {
+            DailyForecast f = DailyForecast.parse(fixture(count), 0);
+            assertEquals(count, f.getDays().size());
+            assertEquals(count, f.upcoming(Instant.parse("2026-11-01T12:00:00Z").toEpochMilli()).size());
+        }
+        DailyForecast old = DailyForecast.parse(fixture(), 0);
+        List<DailyForecast.Day> expanded = old.upcoming(Instant.parse("2026-11-01T12:00:00Z").toEpochMilli(), 16);
+        assertEquals(16, expanded.size());
+        assertNull(expanded.get(7).getHigh());
+        assertNull(expanded.get(15).hasSnow());
+        invalid(fixture(0)); invalid(fixture(17));
     }
 
     private void invalid(JSONObject j) {
